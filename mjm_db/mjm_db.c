@@ -35,7 +35,7 @@ struct vars_header_db_fs
 	uint32_t id_libre;			// item libre
 	uint32_t cont_mods;  		// contagem modificacoes
 	uint32_t code_db;  			// código para validar criacao do banco na posicao da memoria que será gravada
-	uint32_t reservado;			// nada ainda... futuro...
+	uint32_t max_size;			// limite tamanho total que esse banco acupa em bytes
 	// OBS: max 8 vars de 4 bytes!!!!!!!!!!!!
 };
 
@@ -86,14 +86,23 @@ int mjmdb_create_db(const uint32_t end_db, const uint32_t max_packs, const uint3
 	s_header_fs.max_packs = max_packs;
 	s_header_fs.offset_pack = offset_pack + OFF_INIT_DATA_DB;
 	s_header_fs.code_db = CODE_DB_CHECK;
+	s_header_fs.max_size = HEADER_DB + (s_header_fs.offset_pack * s_header_fs.max_packs);
 
-	memcpy(pack, &s_header_fs, sizeof(s_header_fs));
-
-	mem_write_buff(end_db, pack, HEADER_DB);
+	if(s_header_fs.offset_pack < MAX_DATA_DB)
+	{
+		memcpy(pack, &s_header_fs, sizeof(s_header_fs));
+		erro_fs = mem_write_buff(end_db, pack, HEADER_DB);
+	}
+	else
+	{
+		// o pacote nao pode ser alocado no buffer geral da lib 'buf_db[MAX_DATA_DB]'
+		erro_fs=-666;
+	}
 
 	return erro_fs;
 }
 
+// seta valores definidos que vao ser adicionados manualmente..., para fins de importacao de dados que sabe-se quantos vai add
 int mjmdb_create_set_db(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint32_t cont_ids)
 {
 	int erro_fs=0;
@@ -101,7 +110,6 @@ int mjmdb_create_set_db(const uint32_t end_db, const uint32_t max_packs, const u
 
 	memset(&s_header_fs, 0x00, sizeof(s_header_fs));
 
-	// seta valores definidos que vao ser adicionados..., para fins de importacao de dados que sabe-se quantos vai add
 	s_header_fs.max_packs = max_packs;
 	s_header_fs.offset_pack = offset_pack + OFF_INIT_DATA_DB;
 	s_header_fs.cont_ids = cont_ids;
@@ -109,14 +117,24 @@ int mjmdb_create_set_db(const uint32_t end_db, const uint32_t max_packs, const u
 	s_header_fs.id_libre = cont_ids;
 	s_header_fs.cont_mods = cont_ids;
 	s_header_fs.code_db = CODE_DB_CHECK;
+	s_header_fs.max_size = HEADER_DB + (s_header_fs.offset_pack * s_header_fs.max_packs);
 
-	// update configs banco:
-	memcpy(pack, &s_header_fs, sizeof(s_header_fs));
-	erro_fs = mem_write_buff(end_db, pack, HEADER_DB);
+	if(s_header_fs.offset_pack < MAX_DATA_DB)
+	{
+		// update configs banco:
+		memcpy(pack, &s_header_fs, sizeof(s_header_fs));
+		erro_fs = mem_write_buff(end_db, pack, HEADER_DB);
+	}
+	else
+	{
+		// o pacote nao pode ser alocado no buffer geral da lib 'buf_db[MAX_DATA_DB]'
+		erro_fs=-666;
+	}
 
 	return erro_fs;
 }
 
+// seta valores definidos que vao ser adicionados manualmente..., e seta manualmente qual valor do id libre que ficará
 int mjmdb_create_set_db_v2(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint32_t cont_ids, const uint32_t libre)
 {
 	int erro_fs=0;
@@ -124,7 +142,6 @@ int mjmdb_create_set_db_v2(const uint32_t end_db, const uint32_t max_packs, cons
 
 	memset(&s_header_fs, 0x00, sizeof(s_header_fs));
 
-	// seta valores definidos que vao ser adicionados..., para fins de importacao de dados que sabe-se quantos vai add
 	s_header_fs.max_packs = max_packs;
 	s_header_fs.offset_pack = offset_pack + OFF_INIT_DATA_DB;
 	s_header_fs.cont_ids = cont_ids;
@@ -132,10 +149,19 @@ int mjmdb_create_set_db_v2(const uint32_t end_db, const uint32_t max_packs, cons
 	s_header_fs.id_libre = libre;
 	s_header_fs.cont_mods = cont_ids;
 	s_header_fs.code_db = CODE_DB_CHECK;
+	s_header_fs.max_size = HEADER_DB + (s_header_fs.offset_pack * s_header_fs.max_packs);
 
-	// update configs banco:
-	memcpy(pack, &s_header_fs, sizeof(s_header_fs));
-	erro_fs = mem_write_buff(end_db, pack, HEADER_DB);
+	if(s_header_fs.offset_pack < MAX_DATA_DB)
+	{
+		// update configs banco:
+		memcpy(pack, &s_header_fs, sizeof(s_header_fs));
+		erro_fs = mem_write_buff(end_db, pack, HEADER_DB);
+	}
+	else
+	{
+		// o pacote nao pode ser alocado no buffer geral da lib 'buf_db[MAX_DATA_DB]'
+		erro_fs=-666;
+	}
 
 	return erro_fs;
 }
@@ -144,9 +170,10 @@ int mjmdb_create_set_db_v2(const uint32_t end_db, const uint32_t max_packs, cons
 // 's_header_fs' ja foi previamente configurado pois estamos em um import... normalmente
 int mjmdb_write_add_db(const uint32_t end_db, const uint32_t id, const uint32_t size_data, const uint32_t status_id, const uint8_t *data)
 {
-	// size = o tamanho de DATA sem contar com os adicionais 8 bytes... logo abaixo faz a soma de +8...  OFF_INIT_DATA_DB
-	int erro_fs;
 	uint32_t endereco, crc;
+	int erro_fs;
+
+	// OBS: não faz verificação com 's_header_fs', perigo peridooooo
 
 	endereco = id * (size_data+OFF_INIT_DATA_DB) + HEADER_DB;
 
@@ -161,7 +188,7 @@ int mjmdb_write_add_db(const uint32_t end_db, const uint32_t id, const uint32_t 
 	memcpy(&buf_db[4], &crc, 4);
 
 	// aloca a data pack
-	if(size_data <= MAX_DATA_DB)
+	if((size_data+OFF_INIT_DATA_DB) <= MAX_DATA_DB)
 	{
 		memcpy(&buf_db[OFF_INIT_DATA_DB], data, size_data);
 
@@ -178,7 +205,7 @@ int mjmdb_write_add_db(const uint32_t end_db, const uint32_t id, const uint32_t 
 int mjmdb_write_db(const uint32_t end_db, const uint32_t id, const uint32_t acao, const uint32_t status_id, const uint8_t *data)
 {
 	int erro_fs;
-	uint32_t endereco=0, i, j, crc;
+	uint32_t endereco=0, i, endereco2, crc;
 	uint8_t valid=0;
 	uint8_t pack[HEADER_DB];
 
@@ -188,7 +215,7 @@ int mjmdb_write_db(const uint32_t end_db, const uint32_t id, const uint32_t acao
 	{
 		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
 
-		if(acao==ADD_ID_DB)  // ADICIONAR
+		if(acao==ADD_idDB)  // ADICIONAR
 		{
 			// risco de explosao:
 			// chegou no limite do banco e mesmo assim quer add um novo item no banco
@@ -220,8 +247,8 @@ int mjmdb_write_db(const uint32_t end_db, const uint32_t id, const uint32_t acao
 					// tem que descobrir qual o proximo libre
 					for(i=0; i<s_header_fs.cont_ids_aloc; i++)
 					{
-						j = (i*s_header_fs.offset_pack+HEADER_DB)+end_db;
-						valid = mem_read_uint8(j);
+						endereco2 = (i*s_header_fs.offset_pack+HEADER_DB)+end_db;
+						valid = mem_read_uint8(endereco2);
 						if(valid==0 && i!=s_header_fs.id_libre)
 						{
 							break;
@@ -239,19 +266,44 @@ int mjmdb_write_db(const uint32_t end_db, const uint32_t id, const uint32_t acao
 				s_header_fs.cont_ids+=1;
 			}
 		}
-		else if(acao==EDI_ID_DB)  // EDITAR
+		else if(acao==UPD_idDB)  // EDITAR
 		{
+			if(id>=s_header_fs.max_packs)
+			{
+				erro_fs = -1;
+				goto deu_erro;
+			}
 			endereco = id * s_header_fs.offset_pack + HEADER_DB;
 		}
-		else if(acao==DEL_ID_DB)  // EXCLUIR
+		else if(acao==DEL_idDB)  // EXCLUIR
 		{
+			if(id>=s_header_fs.max_packs)
+			{
+				erro_fs = -2;
+				goto deu_erro;
+			}
 			endereco = id * s_header_fs.offset_pack + HEADER_DB;
 			s_header_fs.id_libre = id;  // nao vai ser assim..., massss aqui define o atual libre como sendo o último do excluiu
 			if(s_header_fs.cont_ids) s_header_fs.cont_ids-=1;
 		}
+		else
+		{
+			erro_fs = -3;
+			goto deu_erro;
+		}
+
+		if(endereco > s_header_fs.max_size)
+		{
+			// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
+			// medir o alcance em bytes que vamos querer gravar ou ler...
+			erro_fs = -4;
+			goto deu_erro;
+		}
+
+
 		s_header_fs.cont_mods+=1;  // contagem de modificaçoes realizadas
 
-		// update data banco:
+		// se desloca até offset do endereço do banco
 		endereco += end_db;
 
 		// status_id
@@ -282,6 +334,8 @@ int mjmdb_write_db(const uint32_t end_db, const uint32_t id, const uint32_t acao
 		*/
 	}
 
+	deu_erro:
+
 	return erro_fs;
 }
 
@@ -298,10 +352,15 @@ int mjmdb_read_db(const uint32_t end_db, const uint32_t id, const uint8_t flag_d
 	{
 		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
 
+		if(id>=s_header_fs.max_packs)
+		{
+			erro_fs = -1;
+			goto deu_erro;
+		}
 		endereco = id * s_header_fs.offset_pack + HEADER_DB;
 		endereco += end_db;
 
-		// com verificacao
+		// isso ja foi verificado quando cria o banco mas vamos fazer pra garantir...
 		if(s_header_fs.offset_pack < MAX_DATA_DB)
 		{
 			//printf("endereco read:%u\n", endereco);
@@ -317,7 +376,7 @@ int mjmdb_read_db(const uint32_t end_db, const uint32_t id, const uint8_t flag_d
 					endereco += OFF_INIT_DATA_DB;  // pula o 'status_id' e 'crc'
 					s_header_fs.offset_pack -= OFF_INIT_DATA_DB;
 				}
-
+				// se assume que '*data' consegue alocar o tamanho de 's_header_fs.offset_pack' normalmente
 				memcpy(data, &buf_db[endereco], s_header_fs.offset_pack);
 			}
 			else
@@ -329,22 +388,14 @@ int mjmdb_read_db(const uint32_t end_db, const uint32_t id, const uint8_t flag_d
 		{
 			erro_fs=-67;
 		}
-
-		/*
-		if(flag_data)  // somente a data sera alocada em "*data"
-		{
-			endereco += OFF_INIT_DATA_DB;  // pula o 'status_id' e 'crc'
-			s_header_fs.offset_pack -= OFF_INIT_DATA_DB;
-		}
-
-		// sem verificacao...
-		//erro_fs = mem_read_buff(endereco, s_header_fs.offset_pack, data);
-		*/
 	}
+
+	deu_erro:
 
 	return erro_fs;
 }
 
+// ter certeza da tamanho que deseja ler do pacote do id, normalmente flag_data==1 pois queremos ler um tamanho específico do pacote
 int mjmdb_read_size_db(const uint32_t end_db, const uint32_t id, const uint8_t flag_data, uint8_t *data, const uint32_t size)
 {
 	int erro_fs;
@@ -357,24 +408,43 @@ int mjmdb_read_size_db(const uint32_t end_db, const uint32_t id, const uint8_t f
 	{
 		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
 
+		if(id>=s_header_fs.max_packs)
+		{
+			erro_fs = -1;
+			goto deu_erro;
+		}
+
 		endereco = id * s_header_fs.offset_pack + HEADER_DB;
 		endereco += end_db;
 
-		if(flag_data == DATA_DB)  // somente a data sera alocada em "*data"
+		if(flag_data == DATA_idDB)  // somente a data sera alocada em "*data"
 		{
 			endereco += OFF_INIT_DATA_DB;  // pula o 'status_id' e 'crc'
 			//s_header_fs.offset_pack -= OFF_INIT_DATA_DB;
 		}
 
-		erro_fs = mem_read_buff(endereco, size, data);
+		// o mínimo que vamos validar é limitar com total máximo de bytes do banco
+		// quanto a '*data' to nem ai se vai suportar o que vamos alocar... é por conta e risco de quem chamar essa função
+		if(size < s_header_fs.max_size)
+		{
+			erro_fs = mem_read_buff(endereco, size, data);
 
-		// fazer verificacao de crc???? para dizer se o que leu faz sentido???
-		// ...
+			// fazer verificacao de crc???? para dizer se o que leu faz sentido???
+			// ...
+			// meio que nao tem como pois 'size' é dinâmico... mas daria atraves do 'id' ler o pacote correto e valida-lo
+		}
+		else
+		{
+			erro_fs = -2;
+		}
 	}
+
+	deu_erro:
 
 	return erro_fs;
 }
 
+// ter certeza da tamanho que deseja ler do pacote do id, e dos offsets que se deseja alocar
 int mjmdb_read_data_flex_db(const uint32_t end_db, const uint32_t id, uint8_t *data, const uint32_t size, const uint32_t start)
 {
 	int erro_fs;
@@ -387,21 +457,37 @@ int mjmdb_read_data_flex_db(const uint32_t end_db, const uint32_t id, uint8_t *d
 	{
 		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
 
+		if(id>=s_header_fs.max_packs)
+		{
+			erro_fs = -1;
+			goto deu_erro;
+		}
+
 		endereco = id * s_header_fs.offset_pack + HEADER_DB;
-		endereco += end_db;
 
 		// somente a data sera alocada em "*data"
 		endereco += OFF_INIT_DATA_DB;  // pula o 'status_id' e 'crc'
 
 		endereco += start;  // inicia em que ponto da "data" vai iniciar a quantidade 'size' desejada
 
-
-		erro_fs = mem_read_buff(endereco, size, data);
+		// o mínimo que vamos validar é limitar com total máximo de bytes do banco
+		// quanto a '*data' to nem ai se vai suportar o que vamos alocar... é por conta e risco de quem chamar essa função
+		if(size < s_header_fs.max_size && endereco < s_header_fs.max_size)
+		{
+			endereco += end_db;
+			erro_fs = mem_read_buff(endereco, size, data);
+		}
+		else
+		{
+			erro_fs = -2;
+		}
 
 		// fazer verificacao de crc???? para dizer se o que leu faz sentido???
 		// ...
 		// quebra o brique pq nao leio a data completa para calcular o crc geral...
 	}
+
+	deu_erro:
 
 	return erro_fs;
 }
@@ -411,19 +497,42 @@ int mjmdb_read_data_flex_off_db(const uint32_t end_db, const uint32_t id, uint8_
 {
 	int erro_fs;
 	uint32_t endereco;
+	uint8_t pack[HEADER_DB];
 
-	endereco = id * (offset_data+OFF_INIT_DATA_DB) + HEADER_DB;
+	erro_fs = mem_read_buff(end_db, HEADER_DB, pack);
 
-	// update data banco:
-	endereco += end_db;
+	if(erro_fs==0)
+	{
+		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
 
-	endereco += start;  // inicia em que ponto da "data"???
+		if(id>=s_header_fs.max_packs)
+		{
+			erro_fs = -1;
+			goto deu_erro;
+		}
 
+		endereco = id * (offset_data+OFF_INIT_DATA_DB) + HEADER_DB;
 
-	erro_fs = mem_read_buff(endereco, size, data);
+		endereco += start;  // inicia em que ponto da "data"???
 
-	// fazer verificacao de crc???? para dizer se o que leu faz sentido???
-	// ...
+		// o mínimo que vamos validar é limitar com total máximo de bytes do banco
+		// quanto a '*data' to nem ai se vai suportar o que vamos alocar... é por conta e risco de quem chamar essa função
+		if(size < s_header_fs.max_size && endereco < s_header_fs.max_size)
+		{
+			endereco += end_db;
+			erro_fs = mem_read_buff(endereco, size, data);
+
+			// fazer verificacao de crc???? para dizer se o que leu faz sentido???
+			// ...
+			// quebra o brique pq nao leio a data completa para calcular o crc geral...
+		}
+		else
+		{
+			erro_fs = -2;
+		}
+	}
+
+	deu_erro:
 
 	return erro_fs;
 }
@@ -487,6 +596,10 @@ int mjmdb_get_configs_db(const uint32_t end_db, const uint8_t tipo, uint32_t *co
 		{
 			*config = s_header_fs.code_db;
 		}
+		else if(tipo==MAX_SIZE_DB)
+		{
+			*config = s_header_fs.max_size;
+		}
 		else
 		{
 			*config = 0;
@@ -506,7 +619,13 @@ int mjmdb_get_info_db(const uint32_t end_db, char *sms, const char *nome)  // de
 	if(erro_fs==0)
 	{
 		memcpy(&s_header_fs, pack, sizeof(s_header_fs));
-		i = sprintf(sms, "\nBANCO:%s, END:%u, SETOR:%u\n\tMAX_PACKS:%u, OFFSET_PACK:%u CODE:%u\n\tcont:%u, libre:%u, aloc:%u, mods:%u\n\n", nome, end_db, (end_db/4096), s_header_fs.max_packs, s_header_fs.offset_pack, s_header_fs.code_db, s_header_fs.cont_ids, s_header_fs.id_libre, s_header_fs.cont_ids_aloc, s_header_fs.cont_mods);
+		i = sprintf(sms, "\nBANCO:%s, END:%u, SETOR:%u\n"
+				"\tMAX_PACKS:%u, OFFSET_PACK:%u CODE:%u\n"
+				"\tcont:%u, libre:%u, aloc:%u, mods:%u, max_size:%u\n\n",
+				nome, end_db, (end_db/4096), s_header_fs.max_packs,
+				s_header_fs.offset_pack, s_header_fs.code_db,
+				s_header_fs.cont_ids, s_header_fs.id_libre,
+				s_header_fs.cont_ids_aloc, s_header_fs.cont_mods, s_header_fs.max_size);
 	}
 	return i;
 }
@@ -532,7 +651,7 @@ int mjmdb_get_valids_db(const uint32_t end_db, uint32_t *cont_ids, uint16_t *val
 			endereco += end_db;
 			valid = mem_read_uint8(endereco);
 			//printf("valid:%u\n", valid);
-			if(valid==1)  // cuidar pois pode haver 0 ou 255 indica que está vazio...
+			if(valid)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
 			{
 				cont+=1;
 				valids[j]=i;

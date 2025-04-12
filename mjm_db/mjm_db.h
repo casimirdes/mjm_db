@@ -5,11 +5,13 @@
  *      Author: mella
  */
 
+
 #ifndef SRC_MJM_DB_MJM_DB_H_
 #define SRC_MJM_DB_MJM_DB_H_
 
 /*
-Versão: 0.1 02/04/25
+Versão: 0.2 08/04/25
+
 
 estrutura do "banco" que eu chamo é como se fosse uma tabela individueal que é gravada em um endereço da memória fixo
 e cada tabela é contem um header de 32 que sao a soma de 8 variaveis do tipo uint32_t, são elas:
@@ -22,6 +24,7 @@ cont_ids_aloc = total de pacotes alocados mesmo que estejam desativados
 id_libre = proximo id libre
 cont_mods = contagem modificacoes
 code_db = código para validar criacao do banco na posicao da memoria que será gravada
+max_size = limite tamanho total que esse banco acupa em bytes
 
 para todos os bancos a lógica será sempre os 4 primeiros bytes de cada item terao informaçoes de ativo/desativo....
 cada pacote de item gravado contem:
@@ -32,22 +35,15 @@ cada pacote de item gravado contem:
 	[3]=reservado ???
 4:8 = 4 bytes = crc data
 8:: = data
+
 */
 
-//#define OFF_INIT_ID_DB		4  // (uint32_t) para todo item no banco os 4 primeiros bytes sao "status/controle", todos offsets_packs ja tem q somar isso junto
-//#define OFF_CRC_ID_DB		8  // (uint32_t) para cada item calcula um crc logo a data vai sempre começar no index 12
+
 #define OFF_INIT_DATA_DB	8  // offser que inicia a 'data' do item no banco...
 
 // code check gravado em todos esquemas que envolve ou nao banco...
 #define CODE_DB_CHECK		1654785413UL	// fixo e igual para todos!!!
 
-
-enum e_FUN_ID_DB
-{
-	ADD_ID_DB, 		// add novo no banco
-	EDI_ID_DB, 		// editar um existente
-	DEL_ID_DB		// excluir do banco
-};
 
 // controle interno dos contadores do banco (cada um refere a um uint32_t do config banco), nao confundir com os 4 bytes init de cada item que indicam status do 'id'
 // segue a ordem da struct 's_config_fs'!!!!
@@ -59,16 +55,31 @@ enum e_TYPE_STATUS_DB
 	CONT_MODS_DB, 		// contagem modificacoes
 	MAX_IDS_DB, 		// maximo de pacotes armazenados
 	OFF_IDS_DB,			// offset de cada pacote no banco (descontado 'OFF_INIT_DATA_DB')
-	CODE_DB				// check code de cada banco
+	CODE_DB,			// check code de cada banco
+	MAX_SIZE_DB			// tamanho total em bytes que o banco ocupa
 };
 
+
+enum e_FUN_ID_DB
+{
+	ADD_idDB, 		// add novo ID no banco
+	UPD_idDB, 		// editar/update um ID existente
+	DEL_idDB		// excluir ID do banco
+};
 
 enum e_TYPE_DATA_DB
 {
-	ALL_DB,   	// para resgatar data + status_id do id
-	DATA_DB		// para resgatar somente a data do id
+	ALL_idDB,   	// para resgatar data + status_id do id
+	DATA_idDB		// para resgatar somente a data do id
 };
 
+enum e_TYPE_DATA_packDB
+{
+	ACTIVE_idDB,   		// 0=desativado, 1=ativado
+	ORIGIN_idDB,		// 0=vem da aplicacao local, 1=vem do pc, ...
+	RESERV1_idDB,		// reservado1
+	RESERV2_idDB,		// reservado2
+};
 
 
 //============================================================================================
