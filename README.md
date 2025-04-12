@@ -1,2 +1,2 @@
 # mjm_db
-arganizador de dados binários para memórias flash NOR
+organizador de dados binários para memórias flash NOR
