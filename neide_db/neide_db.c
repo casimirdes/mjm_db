@@ -21,7 +21,7 @@
 #include "neide_db.h"
 
 #define USO_DEBUG_LIB		1  // 0=microcontrolador, 1=PC
-#define PRINT_DEBUG			0  // 1 = printa toda vida o debug
+#define PRINT_DEBUG			1  // 1 = printa toda vida o debug
 
 #define OFF_INIT_DATA_DB	12  // ((4B)status_id, (4B)check_ids, (4B)crc) offset que inicia a 'data' do item no banco...
 
@@ -40,7 +40,7 @@ enum e_config_neidedb
 {
 	eAutoLoop, 		// flag de configuração do auto_loop
 	eCheckUpdID,	// flag validar ou nao 'check_ids' na funcao de update id
-	eReservado2,
+	eCheckAddID,	// flag add no lugar de inativo e válido nao muda id_cont
 	eReservado3,
 };
 
@@ -275,7 +275,7 @@ int neidedb_init(void)
 }
 
 
-int neidedb_create(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint8_t auto_loop, const uint8_t check_update_id)
+int neidedb_create(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint8_t auto_loop, const uint8_t check_update_id, const uint8_t check_add_id_inativo)
 {
 	int erro=erNEIDEDB_OK;
 	header_db s_neide;
@@ -289,6 +289,7 @@ int neidedb_create(const uint32_t end_db, const uint32_t max_packs, const uint32
 	s_neide.max_size = HEADER_DB + (s_neide.offset_pack * s_neide.max_packs);
 	s_neide.configs[eAutoLoop] = auto_loop;
 	s_neide.configs[eCheckUpdID] = check_update_id;
+	s_neide.configs[eCheckAddID] = check_add_id_inativo;
 
 	if(s_neide.offset_pack < MAX_DATA_DB)
 	{
@@ -436,27 +437,6 @@ int neidedb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t *con
 }
 
 
-
-int neidedb_get_info(const uint32_t end_db, char *sms, const char *nome)  // debug...
-{
-	uint32_t cont_ids=0, id_libre=0, id_cont=0;
-	int erro, i=0;
-	header_db s_neide={0};
-
-	erro = _neidedb_statistics(end_db, &s_neide, &cont_ids, &id_libre, &id_cont);
-
-	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%u, SETOR:%u, VERSAO:%08x, erro:%i\n"
-			"\tMAX_PACKS:%u, OFFSET_PACK:%u, CODE:%u, max_size:%u, check_ids:%u, configs:[%u, %u, %u, %u]\n"
-			"\tcont:%u, libre:%u, id_cont:%u\n---------------------------------\n",
-			nome, end_db, (end_db/4096), s_neide.versao, erro, s_neide.max_packs,
-			s_neide.offset_pack, s_neide.code_db, s_neide.max_size, s_neide.check_ids,
-			s_neide.configs[0], s_neide.configs[1], s_neide.configs[2], s_neide.configs[3],
-			cont_ids, id_libre, id_cont);
-
-	return i;
-}
-
-
 int neidedb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids)
 {
 	uint32_t endereco, i, j=0, cont=0, status_id=0, check_ids=0;
@@ -506,6 +486,147 @@ int neidedb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *vali
 
 	return erro;
 }
+
+
+
+
+int neidedb_get_info(const uint32_t end_db, char *sms, const char *nome)  // debug...
+{
+	uint32_t cont_ids=0, id_libre=0, id_cont=0;
+	int erro, i=0;
+	header_db s_neide={0};
+
+	erro = _neidedb_statistics(end_db, &s_neide, &cont_ids, &id_libre, &id_cont);
+
+	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%u, SETOR:%u, VERSAO:%08x, erro:%i\n"
+			"\tMAX_PACKS:%u, OFFSET_PACK:%u, CODE:%u, max_size:%u, check_ids:%u, configs:[%u, %u, %u, %u]\n"
+			"\tcont:%u, libre:%u, id_cont:%u\n---------------------------------\n",
+			nome, end_db, (end_db/4096), s_neide.versao, erro, s_neide.max_packs,
+			s_neide.offset_pack, s_neide.code_db, s_neide.max_size, s_neide.check_ids,
+			s_neide.configs[0], s_neide.configs[1], s_neide.configs[2], s_neide.configs[3],
+			cont_ids, id_libre, id_cont);
+
+	return i;
+}
+
+
+int neidedb_info_deep(const uint32_t end_db, const char *nome_banco)
+{
+	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, id_cont_maior=0, check_ids=0, id_cont_menor=0xffffffff, index_maior=0, index_menor=0;
+	int erro;
+	uint8_t valid=255, set_libre=0;
+	uint8_t b[8];
+	header_db s_neide={0};
+
+	erro = _neidedb_check_db_init(end_db, &s_neide);
+
+	printf("neidedb_info_deep: BANCO:%s\n", nome_banco);
+	printf("END:%u, SETOR:%u, VERSAO:%08x, MAX_PACKS:%u, OFFSET_PACK:%u, CODE:%u, max_size:%u, check_ids:%u, configs:[%u, %u, %u, %u] erro:%i\n",
+			end_db, (end_db/4096), s_neide.versao, s_neide.max_packs,
+			s_neide.offset_pack, s_neide.code_db, s_neide.max_size, s_neide.check_ids,
+			s_neide.configs[0], s_neide.configs[1], s_neide.configs[2], s_neide.configs[3], erro);
+
+	if(erro==erNEIDEDB_OK)
+	{
+		//printf("| i | endereco | status_id | check_ids | valid | id_cont |\n");
+	    printf("| %-3s | %-8s | %-9s | %-12s | %-5s | %-7s |\n",
+	           "i", "endereco", "status_id", "check_ids", "valid", "id_cont");
+	    printf("|-----|----------|-----------|--------------|-------|---------|\n");
+		for(i=0; i<s_neide.max_packs; i++)
+		{
+			endereco = (i*s_neide.offset_pack+HEADER_DB);
+			endereco += end_db;
+			mem_read_buff(endereco, 8, b);
+			memcpy(&status_id, b, 4);
+			memcpy(&check_ids, &b[4], 4);
+			//status_id = mem_read_uint32(endereco);
+
+			if(s_neide.check_ids == check_ids)
+			{
+				valid = (uint8_t)status_id&0xff;
+				id_cont = (status_id>>8)&0xffffff;
+
+				if(valid<=1)  // só aceita 0 ou 1 caso contrário pode estar corrompido ou limpo 0xff
+				{
+					if(id_cont>id_cont_maior)
+					{
+						id_cont_maior = id_cont;
+						index_maior = i;
+					}
+
+					if(id_cont<id_cont_menor)
+					{
+						id_cont_menor = id_cont;
+						index_menor = i;
+					}
+				}
+
+				if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+				{
+					cont_ids+=1;
+				}
+				else
+				{
+					if(set_libre==0)
+					{
+						id_libre = i;  // encontrado o primeiro id_libre
+						set_libre = 1;
+					}
+				}
+				//printf("okkk id:%u, valid:%u, set_libre:%u, id_libre:%u\n", i, valid, set_libre, id_libre);
+			}
+			else
+			{
+				if(set_libre==0)
+				{
+					id_libre = i;  // encontrado o primeiro id_libre
+					set_libre = 1;
+				}
+				//printf("erro id:%u\n", i);
+			}
+
+			//printf("| %u | %u | %u | %u | %u | %u |\n", i, endereco, status_id, check_ids, valid, id_cont);
+			printf("| %-3u | %-8u | %-9u | %-12u | %-5u | %-7u |\n", i, endereco, status_id, check_ids, valid, id_cont);
+			printf("|-----|----------|-----------|--------------|-------|---------|\n");
+		}
+
+		if(set_libre==0 && valid==255)
+		{
+			// tudos sao irregulares... vamos manter 0 em tudo...
+			id_libre = cont_ids;
+			//printf("nada1??? id_libre:%u\n", id_libre);
+		}
+		else if(set_libre==0)
+		{
+			// todos sao validos e ativos... logo o 'id_libre' será o proximo da contagem que parou
+			id_libre = cont_ids;
+
+			// e caso 'cont_ids == s_neide->max_packs' indicando que todos sao ativos e chegou no limite
+			// entao é o brique de assumir que o novo 'id_libre' é o mais antigo dos 'id_cont'
+
+			// se o "auto_loop" nao estiver ativado ele bloqueia...
+			if(cont_ids == s_neide.max_packs)
+			{
+				if(s_neide.configs[eAutoLoop])
+				{
+					id_libre = index_menor;
+				}
+				else
+				{
+					erro = erNEIDEDB_LOT;
+				}
+			}
+
+			//printf("nada2??? id_libre:%u, cont_ids:%u\n", id_libre, cont_ids);
+		}
+	}
+
+
+	printf("DEBUG _neidedb_statistics::: erro:%i, end_db:%u, cont_ids:%u, id_libre:%u, id_cont_maior:%u(%u), id_cont_menor:%u(%u)\n", erro, end_db, cont_ids, id_libre, id_cont_maior, index_maior, id_cont_menor, index_menor);
+
+	return erro;
+}
+
 
 
 
@@ -584,14 +705,17 @@ int neidedb_read(const uint32_t end_db, const uint32_t id, uint8_t *data)
 
 int neidedb_add(const uint32_t end_db, const uint8_t *data)
 {
-	uint32_t endereco=0, crc, cont_ids=0, id_libre=0, status_id=0, id_cont=0;
+	uint32_t endereco=0, crc, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0;
 	int erro;
+	uint8_t b[8];
 	header_db s_neide;
 
 	erro = _neidedb_statistics(end_db, &s_neide, &cont_ids, &id_libre, &id_cont);
 
 	if(erro==erNEIDEDB_OK)
 	{
+		// e se esse que vamos add em 'id_libre' for um invativo e com mesmo 's_neide.check_ids'??? nao eras de manter o 'id_cont'???
+		// e se
 		endereco = id_libre * s_neide.offset_pack + HEADER_DB;
 
 		if(endereco > s_neide.max_size)
@@ -602,10 +726,27 @@ int neidedb_add(const uint32_t end_db, const uint8_t *data)
 			goto deu_erro;
 		}
 
-		id_cont += 1;  // auto incrementa...
-		status_id = id_cont&0xffffff;
-		status_id <<= 8;
-		status_id |= 1;  // indica id ativo
+		// se desloca até offset do endereço do banco
+		endereco += end_db;
+
+		// análise do configs...
+		mem_read_buff(endereco, 8, b);
+		memcpy(&status_id, b, 4);
+		memcpy(&check_ids, &b[4], 4);
+
+		if(s_neide.configs[eCheckAddID]==1 && check_ids == s_neide.check_ids)
+		{
+			// deixar ativo (ou mesmo se estiver ja estiver ativo)
+			status_id |= 0x01;
+		}
+		else
+		{
+			// segue fluxo como sempre foi... independe de nada... vai incrementar 'id_cont'
+			id_cont += 1;  // auto incrementa...
+			status_id = id_cont&0xffffff;
+			status_id <<= 8;
+			status_id |= 1;  // indica id ativo
+		}
 
 		// status_id
 		memcpy(buf_db, &status_id, 4);
@@ -620,8 +761,7 @@ int neidedb_add(const uint32_t end_db, const uint8_t *data)
 		// aloca a data pack
 		memcpy(&buf_db[OFF_INIT_DATA_DB], data, s_neide.offset_pack-OFF_INIT_DATA_DB);
 
-		// se desloca até offset do endereço do banco
-		endereco += end_db;
+
 
 		//printf("endereco write:%u status_id:%08x (%02x %02x %02x %02x) offset_pack:%u\n", endereco, status_id, buf_db[3], buf_db[2], buf_db[1], buf_db[0], s_neide.offset_pack);
 		erro = mem_write_buff(endereco, buf_db, s_neide.offset_pack);
@@ -827,8 +967,9 @@ int neidedb_update_old(const uint32_t end_db, const uint32_t id, uint8_t *data)
 
 int neidedb_del(const uint32_t end_db, const uint32_t id)
 {
-	uint32_t endereco=0, status_id;
+	uint32_t endereco=0, status_id, check_ids=0;
 	int erro;
+	uint8_t b[8];
 	header_db s_neide;
 
 	erro = _neidedb_check_db_init(end_db, &s_neide);
@@ -851,27 +992,35 @@ int neidedb_del(const uint32_t end_db, const uint32_t id)
 			goto deu_erro;
 		}
 
+
 		// se desloca até offset do endereço do banco
 		endereco += end_db;
 
 		// validar o pacote com check_ids e/ou crc??????
+		mem_read_buff(endereco, 8, b);
+		memcpy(&status_id, b, 4);
+		memcpy(&check_ids, &b[4], 4);
 
-		status_id = mem_read_uint32(endereco);
-
-		if((uint8_t)status_id == 0)
+		if(check_ids == s_neide.check_ids)
 		{
-			erro = erNEIDEDB_DEL;
-			goto deu_erro;
+			// faz parte do atual banco...
+
+			if((uint8_t)status_id == 0)
+			{
+				erro = erNEIDEDB_DEL;  // quer deletar e ja está deletado (inativar)
+				goto deu_erro;
+			}
+
+			// deixar inativo
+			status_id &= 0xffffff00;
+
+			// status_id
+			memcpy(buf_db, &status_id, 4);
+
+			//printf("endereco write:%u status_id:%08x (%02x %02x %02x %02x) offset_pack:%u\n", endereco, status_id, buf_db[3], buf_db[2], buf_db[1], buf_db[0], s_neide.offset_pack);
+			erro = mem_write_buff(endereco, buf_db, 4);
 		}
-
-		// deixar inativo
-		status_id &= 0xffffff00;
-
-		// status_id
-		memcpy(buf_db, &status_id, 4);
-
-		//printf("endereco write:%u status_id:%08x (%02x %02x %02x %02x) offset_pack:%u\n", endereco, status_id, buf_db[3], buf_db[2], buf_db[1], buf_db[0], s_neide.offset_pack);
-		erro = mem_write_buff(endereco, buf_db, 4);
+		// caso 'check_ids != s_neide.check_ids' só ignora e segue o baile, nada de erros (temos lixos antigos)
 	}
 
 	deu_erro:

@@ -9,7 +9,7 @@
 #define SRC_NEIDE_DB_NEIDE_DB_H_
 
 /*
-Versão: 0.1 12/04/25
+Versão: 0.11 14/04/25
 
 100% baseado no "mjm_db"
 
@@ -126,21 +126,18 @@ enum e_erros_NEIDEDB
 
 int neidedb_init(void);
 
-// seguras...
-int neidedb_create(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint8_t auto_loop, const uint8_t check_update_id);
+int neidedb_create(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint8_t auto_loop, const uint8_t check_update_id, const uint8_t check_add_id_inativo);
 int neidedb_check(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack);
 int neidedb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t *config);
-int neidedb_get_info(const uint32_t end_db, char *sms, const char *nome);  // debug...
 int neidedb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids);
 
+int neidedb_get_info(const uint32_t end_db, char *sms, const char *nome);  // debug...
+int neidedb_info_deep(const uint32_t end_db, const char *nome_banco);  // debug...
 
 int neidedb_read(const uint32_t end_db, const uint32_t id, uint8_t *data);
 int neidedb_add(const uint32_t end_db, const uint8_t *data);
 int neidedb_update(const uint32_t end_db, const uint32_t id, uint8_t *data);
 int neidedb_del(const uint32_t end_db, const uint32_t id);
-
-
-
 
 
 //============================================================================================
