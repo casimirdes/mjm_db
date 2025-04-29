@@ -647,6 +647,15 @@ int neidedb_read(const uint32_t end_db, const uint32_t id, uint8_t *data)
 			goto deu_erro;
 		}
 		endereco = id * s_neide.offset_pack + HEADER_DB;
+
+		if(endereco > s_neide.max_size)
+		{
+			// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
+			// medir o alcance em bytes que vamos querer gravar ou ler...
+			erro = erNEIDEDB_19;
+			goto deu_erro;
+		}
+
 		endereco += end_db;
 
 		// isso ja foi verificado quando cria o banco mas vamos fazer pra garantir...
@@ -788,7 +797,7 @@ int neidedb_add(const uint32_t end_db, const uint8_t *data)
 
 
 
-int neidedb_update(const uint32_t end_db, const uint32_t id, uint8_t *data)
+int neidedb_update(const uint32_t end_db, const uint32_t id, const uint8_t *data)
 {
 	uint32_t endereco=0, crc, status_id=0, check_ids=0, cont_ids=0, id_libre=0, id_cont=0;
 	int erro;

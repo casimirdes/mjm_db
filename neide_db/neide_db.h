@@ -136,7 +136,7 @@ int neidedb_info_deep(const uint32_t end_db, const char *nome_banco);  // debug.
 
 int neidedb_read(const uint32_t end_db, const uint32_t id, uint8_t *data);
 int neidedb_add(const uint32_t end_db, const uint8_t *data);
-int neidedb_update(const uint32_t end_db, const uint32_t id, uint8_t *data);
+int neidedb_update(const uint32_t end_db, const uint32_t id, const uint8_t *data);
 int neidedb_del(const uint32_t end_db, const uint32_t id);
 
 
