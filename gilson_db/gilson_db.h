@@ -10,7 +10,7 @@
 
 /*
 
-Versão: 0.1 15/04/25
+Versão: 0.2 11/04/25
 
 100% baseado no "neide_db" e "gilson"
 
@@ -33,28 +33,28 @@ gilson_db = banco de dados com giison
 - cada 'nome de tabela' é um endereço de onde vai ser o ponto inicial na memória logo sempre vai gravar no mesma posição
 - não tem tratamento de nivelamento de desgaste de setores, isto é, não escreve dinamicamente em multi setores
 
-
  */
+
 
 #define OFF_PACK_GILSON_DB	16  // status_id + check_ids + tamanho do pacote + crc (as 4 do tipo uint32_t)
 
 
-
-/*
 // controle interno dos contadores do banco (cada um refere a um uint32_t do config banco), nao confundir com os 4 bytes init de cada item que indicam status do 'id'
 // segue a ordem da struct 's_config_fs'!!!!
 enum e_status_gilsondb
 {
-	eMAX_IDS_DB, 		// maximo de pacotes armazenados
-	eOFF_IDS_DB,		// offset de cada pacote no banco (descontado 'OFF_INIT_DATA_DB')
-	eCODE_DB,			// check code de cada banco
-	eMAX_SIZE_DB,		// tamanho total em bytes que o banco ocupa
-	eCHECK_IDS_DB,		// validador de pacotes com header
-	eCONT_IDS_DB, 		// contagem real de itens validos
-	eID_LIBRE_DB, 		// item libre
-	eID_CONT_DB,		// id auto cont max
+	egMAX_IDS_DB, 		// maximo de pacotes armazenados
+	egOFF_IDS_DB,		// offset de cada pacote no banco (descontado 'OFF_INIT_DATA_DB')
+	egCODE_DB,			// check code de cada banco
+	egMAX_SIZE_DB,		// tamanho total em bytes que o banco ocupa
+	egCHECK_IDS_DB,		// validador de pacotes com header
+	egCONT_IDS_DB, 		// contagem real de itens validos
+	egID_LIBRE_DB, 		// item libre
+	egID_CONT_DB,		// id auto cont max
+	egUSED_BYTES_DB,	// quanto do banco foi utilizado em bytes
+	egFREE_BYTES_DB,	// quanto tem libre em bytes
 };
-*/
+
 
 
 /*
@@ -125,7 +125,7 @@ enum e_erros_GILSONDB
 	// vai fazer 'erGILSONDB_xxxx' onde xxxx-1000 = erro retornado
 	erGILSONDB_OK = 0,
 	erGILSONDB_DEL = -4000,
-	erGILSONDB_LOT,
+	erGILSONDB_LOT,  // banco lotado/cheio
 	erGILSONDB_OCUPADO,
 	erGILSONDB_0,
 	erGILSONDB_1,
@@ -176,39 +176,27 @@ enum e_erros_GILSONDB
 //============================================================================================
 //============================================================================================
 
-int gilsondb_init(void);
+int32_t gilsondb_init(void);
 
 
-//int gilsondb_create(const uint32_t end_db, const uint32_t max_packs, const uint8_t *settings, const uint8_t max_keys, const uint8_t *keys);  // **keys
-int gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint8_t *settings);
-int gilsondb_create_add(const uint8_t key, const uint8_t tipo1, const uint8_t tipo2, const uint16_t cont_list_a, const uint16_t cont_list_b, const uint16_t cont_list_step);
-int gilsondb_create_end(const uint32_t end_db);
+int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint8_t *settings);
+int32_t gilsondb_create_add(const uint8_t key, const uint8_t tipo1, const uint8_t tipo2, const uint16_t cont_list_a, const uint16_t cont_list_b, const uint16_t cont_list_step);
+int32_t gilsondb_create_end(const uint32_t end_db);
 
 
-int gilsondb_read(const uint32_t end_db, const uint32_t id, uint8_t *data);
-int gilsondb_add(const uint32_t end_db, uint8_t *data);
-int gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data);
-int gilsondb_del(const uint32_t end_db, const uint32_t id);
+int32_t gilsondb_add(const uint32_t end_db, uint8_t *data);
+int32_t gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data);
+int32_t gilsondb_del(const uint32_t end_db, const uint32_t id);
+int32_t gilsondb_read(const uint32_t end_db, const uint32_t id, uint8_t *data);
 
 
-int gilsondb_check(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack);
-int gilsondb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids);
+int32_t gilsondb_check(const uint32_t end_db, const uint32_t max_packs, const uint32_t offset_pack, const uint32_t codedb);
+int32_t gilsondb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids);
+int32_t gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t *config);
+int32_t gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome);
 
 
-
-/*
-int gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t *config);
-int gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome);  // debug...
-
-
-int gilsondb_read(const uint32_t end_db, const uint32_t id, uint8_t *data);
-int gilsondb_add(const uint32_t end_db, const uint8_t *data);
-int gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data);
-int gilsondb_del(const uint32_t end_db, const uint32_t id);
-*/
-
-
-
+int gilsondb_info_deep(const uint32_t end_db, const char *nome_banco);
 
 //============================================================================================
 //============================================================================================
