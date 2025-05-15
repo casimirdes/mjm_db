@@ -10,7 +10,7 @@
 
 /*
 
-Versão: 0.2 11/04/25
+Versão: 0.3 14/05/25
 
 100% baseado no "neide_db" e "gilson"
 
@@ -51,10 +51,20 @@ enum e_status_gilsondb
 	egCONT_IDS_DB, 		// contagem real de itens validos
 	egID_LIBRE_DB, 		// item libre
 	egID_CONT_DB,		// id auto cont max
-	egUSED_BYTES_DB,	// quanto do banco foi utilizado em bytes
-	egFREE_BYTES_DB,	// quanto tem libre em bytes
+	egUSED_BYTES_DB,	// quanto do banco foi utilizado em bytes nesse momento
+	egFREE_BYTES_DB,	// quanto tem libre em bytes nesse momento
 };
 
+
+enum e_config_gilsondb
+{
+	egFixedSize,		// 0=ativado cada pack de id é gravado com offset do pior caso para poder termos add/update/delete como um banco normal, 1=somente add data dinamica e invativar (invalida qualquer outro flag!)
+	egAutoLoop, 		// 1=flag de configuração do auto_loop, nao retorna o erGILSONDB_LOT e add sempre no local do mais antigo 'id_cont'
+	egCheckUpdID,		// 1=flag validar ou nao 'check_ids' na funcao de update id, temos um code de banco antigo ou lixo qualquer... vai add mesmo assim e assumir esse local como valido
+	egCheckAddID,		// 1=flag add no lugar de inativo e válido nao muda 'id_cont', para fins de manter historico de 'id_cont' caso ja tenha um antigo
+
+	egLENMAX			// final, até 32!!!!
+};
 
 
 /*
@@ -179,7 +189,7 @@ enum e_erros_GILSONDB
 int32_t gilsondb_init(void);
 
 
-int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint8_t *settings);
+int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint32_t max_bytes, const uint8_t *settings);
 int32_t gilsondb_create_add(const uint8_t key, const uint8_t tipo1, const uint8_t tipo2, const uint16_t cont_list_a, const uint16_t cont_list_b, const uint16_t cont_list_step);
 int32_t gilsondb_create_end(const uint32_t end_db);
 

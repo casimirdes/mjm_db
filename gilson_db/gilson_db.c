@@ -42,43 +42,41 @@
 
 #include "gilson_db.h"
 
+
+#define _bitRead(value, bit) (((value) >> (bit)) & 0x01)
+#define _bitSet(value, bit) ((value) |= (1UL << (bit)))
+#define _bitClear(value, bit) ((value) &= ~(1UL << (bit)))
+#define _bitWrite(value, bit, bitvalue) (bitvalue ? bitSet(value, bit) : bitClear(value, bit))
+
+
 #define LIMIT_KEYS			256  	// esse valor é duplicado "tipo1"+"tipo2" uint8_t (limite de 256 chaves de cada tabela/banco)
-#define HEADER_DB			36  	// 4+32 tamanho de offset de cabeçalho de configuracoes do banco...
+#define HEADER_DB			64  	// 4+60 tamanho de offset de cabeçalho de configuracoes do banco...
 #define SECTOR_SIZE_MEM		4096	// supondo uma memória flash NOR que é por setores fixos, aqui temos o tamanho em bytes do setor
 
 #define VERSAO_GILSONDB		0x4d4a4d64  // "MJM"64
 
 
+
 typedef struct
 {
-	// MANTER ESSA ORDEM!!!!! e até 32 'HEADER_DB' bytes!!!!
 	uint32_t versao;			// 4 primeiros bytes sao a 'marca' = "MJM2"
 	uint32_t max_packs;  		// maximo de pacotes armazenados
 	uint32_t code_db;  			// código para validar criacao do banco na posicao da memoria que será gravada
 	uint32_t check_ids;			// esquema de validador que muda toda vez que o banco é criado/limpo onde cada id grava esse valor no pacote
 	uint32_t size_max_pack;		// tamanho do pacote 'data' (no pior caso) e soma o 'OFF_PACK_GILSON_DB'
+	uint32_t size_max_tot;		// tamanho maximo do pacote, caso o usuário entre com um valor especifico
 
-	uint8_t configs[4];			// [0]=auto_loop, [1]=check_update_id
+	uint32_t configs_bits;		// ver 'e_config_gilsondb'
 
 	uint16_t size_header;     	// tamanho do pacote header, vai ser dinamico agora... (da pra ser um uint16_t)
-	uint16_t reserva16;
 
-	uint8_t max_keys;			// total de chaves do gilson, até 255 (0 a 255 = 256)
-	uint8_t reserv2;
-	uint8_t reserv3;
-	uint8_t reserv4;
+	uint16_t max_keys;			// total de chaves do gilson, até 256
 
-	// OBS: max 32 bytes!!!!!!!!!!!!
+	// OBS: max 64 bytes liquidos!!!!!!!!!!!!
 }header_db;
 
 
-enum e_config_gilsondb
-{
-	eFixedSize,		// 0=ativado cada pack de id é gravado com offset do pior caso para poder termos add/update/delete como um banco normal, 1=somente add data dinamica e invativar
-	eAutoLoop, 		// flag de configuração do auto_loop
-	eCheckUpdID,	// flag validar ou nao 'check_ids' na funcao de update id
-	eCheckAddID,	// flag add no lugar de inativo e válido nao muda id_cont
-};
+
 
 
 static uint8_t buf_db[SECTOR_SIZE_MEM];  // base no setor da memoria que vale 4096 bytes, 3 setores...
@@ -155,6 +153,91 @@ static void update_erro_global(int32_t erro)
 
 
 
+static int32_t _encode_header_db(header_db *data, uint8_t *pack, const uint16_t size)
+{
+	uint32_t crc=0;
+	int32_t erro=0, pos_bytes = 0;
+
+    erro = gilson_encode_init(GSON_MODO_ZIP, pack, size);
+    erro = gilson_encode(0, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->versao);
+    erro = gilson_encode(1, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->max_packs);
+    erro = gilson_encode(2, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->code_db);
+    erro = gilson_encode(3, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->check_ids);
+    erro = gilson_encode(4, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->size_max_pack);
+    erro = gilson_encode(5, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->size_max_tot);
+    erro = gilson_encode(6, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->configs_bits);
+    erro = gilson_encode(7, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->size_header);
+    erro = gilson_encode(8, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->max_keys);
+    pos_bytes = gilson_encode_end(&crc);  // criar outra que nao devolve o crc!!!!
+
+#if (USO_DEBUG_LIB==1)
+	if(PRINT_DEBUG==1 || erro!=erGILSONDB_OK)
+	{
+#if (TIPO_DEVICE==0)
+		printf_DEBUG("DEBUG _encode_header_db::: erro:%i, pos_bytes:%lu, crc:%lu\n", erro, pos_bytes, crc);
+#else  // PC
+		printf("DEBUG _encode_header_db::: erro:%i, pos_bytes:%u, crc:%u\n", erro, pos_bytes, crc);
+#endif  // #if (TIPO_DEVICE==1)
+	}
+#endif  // #if (USO_DEBUG_LIB==1)
+
+	update_erro_global(erro);
+
+    return erro;
+}
+
+static int32_t _decode_header_db(header_db *data, const uint8_t *pack)
+{
+	uint32_t crc=0;
+	int32_t erro=0, pos_bytes = 0;
+	uint8_t modo=0;
+
+	memset(data, 0x00, sizeof(*data));
+
+	erro = gilson_decode_init(pack, &modo);
+    erro = gilson_decode(0, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->versao);
+    erro = gilson_decode(1, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->max_packs);
+    erro = gilson_decode(2, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->code_db);
+    erro = gilson_decode(3, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->check_ids);
+    erro = gilson_decode(4, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->size_max_pack);
+    erro = gilson_decode(5, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->size_max_tot);
+    erro = gilson_decode(6, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->configs_bits);
+    erro = gilson_decode(7, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->size_header);
+    erro = gilson_decode(8, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->max_keys);
+	pos_bytes = gilson_decode_end(&crc);
+
+#if (USO_DEBUG_LIB==1)
+	if(PRINT_DEBUG==1 || erro!=erGILSONDB_OK || pos_bytes<0)
+	{
+#if (TIPO_DEVICE==0)
+		printf_DEBUG("DEBUG _decode_header_db::: erro:%i, pos_bytes:%lu, crc:%lu\n", erro, pos_bytes, crc);
+#else  // PC
+		printf("DEBUG _decode_header_db::: erro:%i, pos_bytes:%u, crc:%u\n", erro, pos_bytes, crc);
+#endif  // #if (TIPO_DEVICE==1)
+	}
+#endif  // #if (USO_DEBUG_LIB==1)
+
+	update_erro_global(erro);
+
+	return erro;
+}
+
+static int32_t _get_header_db(const uint32_t end_db, header_db *s_gdb, uint32_t *crc_)
+{
+	uint32_t crc=0;
+	int32_t erro=0;
+
+	erro = mem_read_buff(end_db, HEADER_DB, buf_db);
+	if(erro==0)
+	{
+		memcpy(&crc, buf_db, 4);
+		erro = _decode_header_db(s_gdb, &buf_db[4]);
+	}
+
+	*crc_ = crc;
+	return erro;
+}
+
 // valida as 2 variaveis que temos certeza que devem estar com esses valores define
 static int32_t _gilsondb_check_db_init(const uint32_t end_db, header_db *s_gdb)
 {
@@ -163,12 +246,13 @@ static int32_t _gilsondb_check_db_init(const uint32_t end_db, header_db *s_gdb)
 
 	if(flag_s_gilsondb_ativo==0)
 	{
-		erro = mem_read_buff(end_db, HEADER_DB, buf_db);
+		//erro = mem_read_buff(end_db, HEADER_DB, buf_db);
+		erro = _get_header_db(end_db, s_gdb, &crc1);
 
 		if(erro==erGILSONDB_OK)
 		{
-			memcpy(&crc1, buf_db, 4);
-			memcpy(s_gdb, &buf_db[4], sizeof(*s_gdb));
+			//memcpy(&crc1, buf_db, 4);
+			//memcpy(s_gdb, &buf_db[4], sizeof(*s_gdb));
 
 			if(s_gdb->versao != VERSAO_GILSONDB)
 			{
@@ -181,10 +265,11 @@ static int32_t _gilsondb_check_db_init(const uint32_t end_db, header_db *s_gdb)
 				goto deu_erro;
 			}
 
+			// vamos ler pacote do header total
 			erro = mem_read_buff(end_db+4, (s_gdb->size_header - 4), buf_db);  // le o restante do header completo!
 
+			// valida o crc do size_header
 			crc2 = gilsondb_crc(0xffffffff, buf_db, (s_gdb->size_header - 4));
-
 			if(crc1 != crc2)
 			{
 				erro = erGILSONDB_0;
@@ -226,50 +311,135 @@ static int32_t _gilsondb_check_db_init(const uint32_t end_db, header_db *s_gdb)
 }
 
 
-static int32_t _gilsondb_statistics(const uint32_t end_db, header_db *s_gdb, uint32_t *cont_ids_, uint32_t *id_libre_, uint32_t *id_cont_)
+static int32_t _gilsondb_statistics(const uint32_t end_db, header_db *s_gdb, uint32_t *cont_ids_, uint32_t *id_libre_, uint32_t *id_cont_, uint32_t *size_bytes_)
 {
-	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, id_cont_maior=0, check_ids=0, id_cont_menor=0xffffffff, index_maior=0, index_menor=0;
+	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, id_cont_maior=0, check_ids=0, id_cont_menor=0xffffffff, index_maior=0, index_menor=0, len_pacote=0, crc1=0, size_bytes=0;
 	int32_t erro;
 	uint8_t valid=255, set_libre=0;
 	uint8_t b[OFF_PACK_GILSON_DB];
+
+	// OBS: nao vamos validar crc de cada pacote
 
 	erro = _gilsondb_check_db_init(end_db, s_gdb);
 
 	if(erro==erGILSONDB_OK)
 	{
-		for(i=0; i<s_gdb->max_packs; i++)
+		if(_bitRead(s_gdb->configs_bits, egFixedSize)==1)
 		{
-			// quando 'eFixedSize' está ativado???? nada ainda...
-			endereco = i * s_gdb->size_max_pack + s_gdb->size_header;
+			// aqui o que importa é descobrir o endereço de onde começa o proximo id libre e vamos alocar esse endereço em 'xxxxxx'
+			endereco = s_gdb->size_header;  // 0 * s_gdb->size_max_pack + s_gdb->size_header
 			endereco += end_db;
-
-			mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
-			memcpy(&status_id, b, 4);
-			memcpy(&check_ids, &b[4], 4);
-
-			if(s_gdb->check_ids == check_ids)
+			for(i=0; i<s_gdb->max_packs; i++)
 			{
-				valid = (uint8_t)status_id&0xff;
-				id_cont = (status_id>>8)&0xffffff;
+				erro = mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+				memcpy(&len_pacote, &b[8], 4);
+				memcpy(&crc1, &b[12], 4);
 
-				if(valid<=1)  // só aceita 0 ou 1 caso contrário pode estar corrompido ou limpo 0xff
+				if(s_gdb->check_ids == check_ids)
 				{
-					if(id_cont>id_cont_maior)
-					{
-						id_cont_maior = id_cont;
-						index_maior = i;
-					}
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
 
-					if(id_cont<id_cont_menor)
+					// OBS: nesse modo, 'id_cont' segue o mesmo valor de 'cont_ids' pois só pode ir até o limite 'max_packs' e começa em 1
+
+					if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
 					{
-						id_cont_menor = id_cont;
-						index_menor = i;
+						if(id_cont>id_cont_maior)
+						{
+							id_cont_maior = id_cont;
+							index_maior = i;
+						}
+						if(id_cont<id_cont_menor)
+						{
+							id_cont_menor = id_cont;
+							index_menor = i;
+						}
+
+						cont_ids+=1;
+
+						// é um dado valido entao avançamos
+						len_pacote += OFF_PACK_GILSON_DB;
+						endereco += len_pacote;
+						// resulta no endereço do proximo id
+					}
+					else
+					{
+						// tem problema, embora o 'check_ids' deu boa
+						// vamos assumir que esse é um libre entao
+						id_libre = i;  // encontrado o primeiro id_libre
+						set_libre = 1;
+						break;
 					}
 				}
-
-				if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+				else
 				{
-					cont_ids+=1;
+					id_libre = i;  // encontrado o primeiro id_libre
+					set_libre = 1;
+					break;
+				}
+			}
+
+			if(set_libre==0)
+			{
+				// todos ocupadosn ja... i==s_gdb->max_packs
+				set_libre = 1;
+				erro = erGILSONDB_LOT;
+			}
+			else
+			{
+				id_libre = endereco;  // gambi vai ser que nesse modo 'id_libre' vai receber o endereço para o proximo id libre!!!
+			}
+
+
+			//*cont_ids_ = cont_ids;
+			//*id_libre_ = id_libre;
+			//*id_cont_ = id_cont_maior;
+		}
+		else
+		{
+			for(i=0; i<s_gdb->max_packs; i++)
+			{
+				endereco = i * s_gdb->size_max_pack + s_gdb->size_header;
+				endereco += end_db;
+
+				mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+
+				if(s_gdb->check_ids == check_ids)
+				{
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
+
+					if(valid<=1)  // só aceita 0 ou 1 caso contrário pode estar corrompido ou limpo 0xff
+					{
+						if(id_cont>id_cont_maior)
+						{
+							id_cont_maior = id_cont;
+							index_maior = i;
+						}
+						if(id_cont<id_cont_menor)
+						{
+							id_cont_menor = id_cont;
+							index_menor = i;
+						}
+					}
+
+					if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+					{
+						cont_ids+=1;
+					}
+					else
+					{
+						if(set_libre==0)
+						{
+							id_libre = i;  // encontrado o primeiro id_libre
+							set_libre = 1;
+						}
+					}
+					//printf("okkk id:%u, valid:%u, set_libre:%u, id_libre:%u\n", i, valid, set_libre, id_libre);
 				}
 				else
 				{
@@ -278,54 +448,51 @@ static int32_t _gilsondb_statistics(const uint32_t end_db, header_db *s_gdb, uin
 						id_libre = i;  // encontrado o primeiro id_libre
 						set_libre = 1;
 					}
+					//printf("erro id:%u\n", i);
 				}
-				//printf("okkk id:%u, valid:%u, set_libre:%u, id_libre:%u\n", i, valid, set_libre, id_libre);
 			}
-			else
+
+
+			if(set_libre==0 && valid==255)
 			{
-				if(set_libre==0)
-				{
-					id_libre = i;  // encontrado o primeiro id_libre
-					set_libre = 1;
-				}
-				//printf("erro id:%u\n", i);
+				// tudos sao irregulares... vamos manter 0 em tudo...
+				id_libre = cont_ids;
+				//printf("nada1??? id_libre:%u\n", id_libre);
 			}
-		}
-
-		if(set_libre==0 && valid==255)
-		{
-			// tudos sao irregulares... vamos manter 0 em tudo...
-			id_libre = cont_ids;
-			//printf("nada1??? id_libre:%u\n", id_libre);
-		}
-		else if(set_libre==0)
-		{
-			// todos sao validos e ativos... logo o 'id_libre' será o proximo da contagem que parou
-			id_libre = cont_ids;
-
-			// e caso 'cont_ids == s_neide->max_packs' indicando que todos sao ativos e chegou no limite
-			// entao é o brique de assumir que o novo 'id_libre' é o mais antigo dos 'id_cont'
-
-			// se o "auto_loop" nao estiver ativado ele bloqueia...
-			if(cont_ids == s_gdb->max_packs)
+			else if(set_libre==0)
 			{
-				if(s_gdb->configs[eAutoLoop])
-				{
-					id_libre = index_menor;
-				}
-				else
-				{
-					erro = erGILSONDB_LOT;
-				}
-			}
+				// todos sao validos e ativos... logo o 'id_libre' será o proximo da contagem que parou
+				id_libre = cont_ids;
 
-			//printf("nada2??? id_libre:%u, cont_ids:%u\n", id_libre, cont_ids);
+				// e caso 'cont_ids == s_neide->max_packs' indicando que todos sao ativos e chegou no limite
+				// entao é o brique de assumir que o novo 'id_libre' é o mais antigo dos 'id_cont'
+
+				// se o "auto_loop" nao estiver ativado ele bloqueia...
+				if(cont_ids == s_gdb->max_packs)
+				{
+					if(_bitRead(s_gdb->configs_bits, egAutoLoop)==1)
+					{
+						id_libre = index_menor;
+					}
+					else
+					{
+						erro = erGILSONDB_LOT;
+					}
+				}
+
+				//printf("nada2??? id_libre:%u, cont_ids:%u\n", id_libre, cont_ids);
+			}
 		}
 	}
+
+	// para modo 'egFixedSize' teremos contagem dos bytes usados
+	// para modo sem 'egFixedSize' é o mesmo que percorrer tamanho maximo do banco
+	size_bytes = endereco - end_db;  // total em bytes deslocado para fazer as leituras
 
 	*cont_ids_ = cont_ids;
 	*id_libre_ = id_libre;
 	*id_cont_ = id_cont_maior;
+	*size_bytes_ = size_bytes;
 
 #if (USO_DEBUG_LIB==1)
 	if(PRINT_DEBUG==1 || erro!=erGILSONDB_OK)
@@ -350,7 +517,7 @@ static int32_t _gilsondb_statistics(const uint32_t end_db, header_db *s_gdb, uin
 static void _print_header_db(const header_db *s_gdb, const uint32_t end_db)
 {
 #if (TIPO_DEVICE==0)
-	printf_DEBUG("DEBUG INFO STRUCT_DB::: end_db:%lu(%lu), versao:%08lx, max_packs:%lu, code_db:%lu, check_ids:%lu, size_max_pack:%lu, configs:[%u, %u, %u, %u], size_header:%lu, max_keys:%lu, erg:%i, ativo:%u\n",
+	printf_DEBUG("DEBUG INFO STRUCT_DB::: end_db:%lu(%lu), versao:%08lx, max_packs:%lu, code_db:%lu, check_ids:%lu, size_max_pack:%lu, configs:0x%08lx, size_header:%lu, max_keys:%lu, erg:%i, ativo:%u\n",
 			end_db, (end_db/4096),
 			s_gdb->versao,
 			s_gdb->max_packs,
@@ -363,14 +530,14 @@ static void _print_header_db(const header_db *s_gdb, const uint32_t end_db)
 			erro_global,
 			flag_s_gilsondb_ativo);
 #else  // PC
-	printf("DEBUG INFO STRUCT_DB::: end_db:%u(%u), versao:%08x, max_packs:%u, code_db:%u, check_ids:%u, size_max_pack:%u, configs:[%u, %u, %u, %u], size_header:%u, max_keys:%u, erg:%i, ativo:%u\n",
+	printf("DEBUG INFO STRUCT_DB::: end_db:%u(%u), versao:%08x, max_packs:%u, code_db:%u, check_ids:%u, size_max_pack:%u, configs:0x%08x, size_header:%u, max_keys:%u, erg:%i, ativo:%u\n",
 			end_db, (end_db/4096),
 			s_gdb->versao,
 			s_gdb->max_packs,
 			s_gdb->code_db,
 			s_gdb->check_ids,
 			s_gdb->size_max_pack,
-			s_gdb->configs[0], s_gdb->configs[1], s_gdb->configs[2], s_gdb->configs[3],
+			s_gdb->configs_bits,
 			s_gdb->size_header,
 			s_gdb->max_keys,
 			erro_global,
@@ -390,9 +557,10 @@ int32_t gilsondb_init(void)
 
 
 // https://www.youtube.com/watch?v=rtGACXTp6mY
-int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint8_t *settings)
+int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint32_t max_bytes, const uint8_t *settings)
 {
 	int32_t erro=erGILSONDB_OK;
+	uint8_t i;
 
 	if(erro_global!=erGILSONDB_OCUPADO && flag_s_gilsondb_ativo==1)
 	{
@@ -414,11 +582,32 @@ int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, co
 		//um dos parameteos vai ser esquema de operar em saltos fixos de pior caso ou sempre dinamico
 		//mas dai só permite ler e add toda vida até o fim do limite...
 		//senao é possivel operar tipo banco que edita, exclui, add...
+		for(i=0; i<egLENMAX; i++)
+		{
+			if(settings[i])
+			{
+				_bitSet(s_gilsondb.configs_bits, i);
+			}
+		}
+		//s_gilsondb.configs_bits=0;
+		//s_gilsondb.configs[0] = settings[0];
+		//s_gilsondb.configs[1] = settings[1];
+		//s_gilsondb.configs[2] = settings[2];
+		//s_gilsondb.configs[3] = settings[3];
 
-		s_gilsondb.configs[0] = settings[0];
-		s_gilsondb.configs[1] = settings[1];
-		s_gilsondb.configs[2] = settings[2];
-		s_gilsondb.configs[3] = settings[3];
+		if(_bitRead(s_gilsondb.configs_bits, egFixedSize)==1)
+		{
+			if(max_bytes==0)
+			{
+				erro = erGILSONDB_30;
+				goto deu_erro;
+			}
+			s_gilsondb.size_max_tot = max_bytes;
+		}
+		// la em 'gilsondb_create_end()' vai atualizar com o valor final de 's_gilsondb.size_max_tot' para todos os modos!!!
+
+
+
 
 		//-------------------------------------------------------------------------------------------------------
 		// bruxaria para gerar o 'check_ids' usando uma mistura de crc+seed_prng
@@ -463,6 +652,8 @@ int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, co
 	{
 		erro = erGILSONDB_OCUPADO;
 	}
+
+	deu_erro:
 
 #if (USO_DEBUG_LIB==1)
 	_print_header_db(&s_gilsondb, end_db);
@@ -628,15 +819,27 @@ int32_t gilsondb_create_end(const uint32_t end_db)
 
 	if(flag_s_gilsondb_ativo==1)
 	{
-		memcpy(&buf_db[4], &s_gilsondb, sizeof(s_gilsondb));
-		// restante de 'buf_db' ja foi alocado nas camandas de 'gilsondb_create_add()'
+		if(_bitRead(s_gilsondb.configs_bits, egFixedSize)==0)
+		{
+			s_gilsondb.size_max_tot = s_gilsondb.max_packs * s_gilsondb.size_max_pack + s_gilsondb.size_header;
+		}
 
-		// grava tudo que alocou... e quantos bytes ocupa o HEADER total pois ele é dinamico e temos tambem um crc do header
-		crc_header = gilsondb_crc(0xffffffff, &buf_db[4], (s_gilsondb.size_header - 4));
+		erro = _encode_header_db(&s_gilsondb, &buf_db[4], (HEADER_DB-4));
 
-		memcpy(buf_db, &crc_header, 4);
+		if(erro==0)
+		{
+			//memcpy(&buf_db[4], &s_gilsondb, sizeof(s_gilsondb));
+			// restante de 'buf_db' ja foi alocado nas camandas de 'gilsondb_create_add()'
 
-		erro = mem_write_buff(end_db, buf_db, s_gilsondb.size_header);
+			// grava tudo que alocou... e quantos bytes ocupa o HEADER total pois ele é dinamico e temos tambem um crc do header
+			crc_header = gilsondb_crc(0xffffffff, &buf_db[4], (s_gilsondb.size_header - 4));
+
+			memcpy(buf_db, &crc_header, 4);
+
+			erro = mem_write_buff(end_db, buf_db, s_gilsondb.size_header);
+
+
+		}
 
 		flag_s_gilsondb_ativo = 0;
 	}
@@ -677,12 +880,12 @@ int32_t gilsondb_create_end(const uint32_t end_db)
 
 int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 {
-	uint32_t endereco=0, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0, len_pacote=0, crc1=0, crc2=0;
+	uint32_t endereco=0, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0, len_pacote=0, crc1=0, crc2=0, size_bytes=0;
 	int32_t erro=erGILSONDB_OK;
 	uint8_t b[OFF_PACK_GILSON_DB];
 	header_db s_gdb;
 
-	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont);
+	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont, &size_bytes);
 
 	// para toda a 'data[]' sabemos que tem um offset de 16 bytes!!!
 	// status_id + check_ids + tamanho do pacote + crc
@@ -691,24 +894,6 @@ int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 
 	if(erro==erGILSONDB_OK)
 	{
-		endereco = id_libre * s_gdb.size_max_pack + s_gdb.size_header;
-
-		if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))
-		{
-			// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
-			// medir o alcance em bytes que vamos querer gravar ou ler...
-			erro = erGILSONDB_3;
-			goto deu_erro;
-		}
-
-		// se desloca até offset do endereço do banco
-		endereco += end_db;
-
-		// análise do configs... do pacote antigo caso exista...
-		mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
-		memcpy(&status_id, b, 4);
-		memcpy(&check_ids, &b[4], 4);
-
 		// tamanho do pacote novo, que está alocado na 'data'!!!
 		memcpy(&len_pacote, &data[8], 4);
 #if (USO_DEBUG_LIB==1)
@@ -718,6 +903,55 @@ int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 		//-----------------------------------------------------------
 #endif  // #if (USO_DEBUG_LIB==1)
 
+
+		if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+		{
+			// em 'id_libre' teremos o endereco do proximo id
+			endereco = id_libre;
+			//id_libre = cont_ids;  para manter a logica correta do 'id_libre'
+			endereco -= end_db;  // remove pois ja vem adicionado porem depois vamos adiciona-lo novamente!
+
+			//printf("tcheeeeeeeeeeeeeeee endereco:%u e size_max_tot:%u\n", endereco, s_gdb.size_max_tot);
+			if((endereco+len_pacote+OFF_PACK_GILSON_DB) > s_gdb.size_max_tot)
+			{
+				erro = erGILSONDB_31;
+				goto deu_erro;
+			}
+		}
+		else
+		{
+			endereco = id_libre * s_gdb.size_max_pack + s_gdb.size_header;
+
+			//printf("tcheeeeeeeeeeeeeeee endereco:%u e size_max_tot:%u\n", endereco, s_gdb.size_max_tot);
+			if(endereco > s_gdb.size_max_tot)  // if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))
+			{
+				// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
+				// medir o alcance em bytes que vamos querer gravar ou ler...
+				erro = erGILSONDB_3;
+				goto deu_erro;
+			}
+		}
+
+		// se desloca até offset do endereço do banco
+		endereco += end_db;
+
+		// análise do configs... do pacote antigo caso exista...
+		// pra o 'egFixedSize' ativo, isso vai dar ruim pois vai estar errado
+		mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+		memcpy(&status_id, b, 4);
+		memcpy(&check_ids, &b[4], 4);
+
+		/*
+		// tamanho do pacote novo, que está alocado na 'data'!!!
+		memcpy(&len_pacote, &data[8], 4);
+#if (USO_DEBUG_LIB==1)
+		// debug ----------------------------------------------------
+		memcpy(&crc1, &data[12], 4);  // debug
+		crc2 = gilsondb_crc(0xffffffff, &data[OFF_PACK_GILSON_DB], len_pacote);
+		//-----------------------------------------------------------
+#endif  // #if (USO_DEBUG_LIB==1)
+		 */
+
 		if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
 		{
 			erro=erGILSONDB_20;
@@ -725,7 +959,7 @@ int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 		}
 		len_pacote += OFF_PACK_GILSON_DB;
 
-		if(s_gdb.configs[eCheckAddID]==1 && check_ids == s_gdb.check_ids)
+		if(_bitRead(s_gdb.configs_bits, egCheckAddID)==1 && check_ids == s_gdb.check_ids)
 		{
 			// deixar ativo (ou mesmo se estiver ja estiver ativo)
 			status_id |= 0x01;
@@ -733,7 +967,7 @@ int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 		else
 		{
 			// segue fluxo como sempre foi... independe de nada... vai incrementar 'id_cont'
-			id_cont += 1;  // auto incrementa...
+			id_cont += 1;  // auto incrementa..., o sempre começa em 1 entao!
 			status_id = id_cont&0xffffff;
 			status_id <<= 8;
 			status_id |= 0x01;  // indica id ativo
@@ -777,16 +1011,22 @@ int32_t gilsondb_add(const uint32_t end_db, uint8_t *data)
 
 int32_t gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data)
 {
-	uint32_t endereco=0, status_id=0, check_ids=0, cont_ids=0, id_libre=0, id_cont=0, len_pacote=0;
+	uint32_t endereco=0, status_id=0, check_ids=0, cont_ids=0, id_libre=0, id_cont=0, len_pacote=0, size_bytes=0;
 	int32_t erro=erGILSONDB_OK;
 	uint8_t b[OFF_PACK_GILSON_DB];
 	header_db s_gdb;
 
 
-	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont);
+	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont, &size_bytes);
 
-	if(erro==erGILSONDB_OK)
+	if(erro==erGILSONDB_OK || erro==erGILSONDB_LOT)
 	{
+		if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+		{
+			erro = erGILSONDB_22;
+			goto deu_erro;
+		}
+
 		if(id>=s_gdb.max_packs)
 		{
 			erro = erGILSONDB_4;
@@ -795,7 +1035,7 @@ int32_t gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data)
 
 		endereco = id * s_gdb.size_max_pack + s_gdb.size_header;
 
-		if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))  // if(endereco > (s_gdb.max_packs * s_gdb.size_max_pack))
+		if(endereco > s_gdb.size_max_tot)  // if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))
 		{
 			// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
 			// medir o alcance em bytes que vamos querer gravar ou ler...
@@ -821,9 +1061,9 @@ int32_t gilsondb_update(const uint32_t end_db, const uint32_t id, uint8_t *data)
 		}
 		len_pacote += OFF_PACK_GILSON_DB;
 
-		if(s_gdb.configs[eCheckUpdID]==1 || check_ids == s_gdb.check_ids)
+		if(_bitRead(s_gdb.configs_bits, egCheckUpdID)==1 || check_ids == s_gdb.check_ids)
 		{
-			if(s_gdb.configs[eCheckUpdID]==1)
+			if(_bitRead(s_gdb.configs_bits, egCheckUpdID)==1)
 			{
 				// vamos atualizar um antigo que pode ser lixo antigo de outro banco ou devido ter limpado o banco
 				id_cont += 1;  // auto incrementa...
@@ -892,6 +1132,12 @@ int32_t gilsondb_del(const uint32_t end_db, const uint32_t id)
 
 	if(erro==erGILSONDB_OK)
 	{
+		if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+		{
+			erro = erGILSONDB_23;
+			goto deu_erro;
+		}
+
 		if(id>=s_gdb.max_packs)
 		{
 			erro = erGILSONDB_7;
@@ -960,7 +1206,7 @@ int32_t gilsondb_del(const uint32_t end_db, const uint32_t id)
 
 int32_t gilsondb_read(const uint32_t end_db, const uint32_t id, uint8_t *data)
 {
-	uint32_t endereco, crc1=0, crc2=0, check_ids=0, id_cont=0, status_id=0, len_pacote=0;
+	uint32_t endereco, crc1=0, crc2=0, check_ids=0, id_cont=0, status_id=0, len_pacote=0, i;
 	int32_t erro=erGILSONDB_OK;
 	uint8_t valid;
 	uint8_t b[OFF_PACK_GILSON_DB]={0};
@@ -976,57 +1222,125 @@ int32_t gilsondb_read(const uint32_t end_db, const uint32_t id, uint8_t *data)
 			erro = erGILSONDB_9;
 			goto deu_erro;
 		}
-		endereco = id * s_gdb.size_max_pack + s_gdb.size_header;
 
-		if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))  // if(endereco > (s_gdb.max_packs * s_gdb.size_max_pack))
+		if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
 		{
-			// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
-			// medir o alcance em bytes que vamos querer gravar ou ler...
-			erro = erGILSONDB_10;
-			goto deu_erro;
-		}
-
-		// se desloca até offset do endereço do banco
-		endereco += end_db;
-
-		// análise do configs... do pacote antigo caso exista...
-		erro = mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
-		memcpy(&status_id, b, 4);
-		memcpy(&check_ids, &b[4], 4);
-		memcpy(&len_pacote, &b[8], 4);
-		memcpy(&crc2, &b[12], 4);
-
-		if(check_ids == s_gdb.check_ids)
-		{
-			endereco += OFF_PACK_GILSON_DB;
-
-			if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
+			// vamos fazer uma busca linear no banco até chegar no id alvo
+			endereco = s_gdb.size_header;  // 0 * s_gdb->size_max_pack + s_gdb->size_header
+			endereco += end_db;
+			for(i=0; i<s_gdb.max_packs; i++)
 			{
-				erro=erGILSONDB_19;
-				goto deu_erro;
-			}
+				// análise do configs...
+				erro = mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+				memcpy(&len_pacote, &b[8], 4);
+				memcpy(&crc2, &b[12], 4);
 
-			// assume que o buffer 'data' vai conseguir alocar os dados resgatados!!!!
-			erro = mem_read_buff(endereco, len_pacote, data);
+				if(check_ids == s_gdb.check_ids)
+				{
+					endereco += OFF_PACK_GILSON_DB;
 
-			crc1 = gilsondb_crc(0xffffffff, data, len_pacote);
+					if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
+					{
+						erro=erGILSONDB_25;
+						goto deu_erro;
+					}
 
-			if(crc1 == crc2)
-			{
-				valid = (uint8_t)status_id&0xff;
-				id_cont = (status_id>>8)&0xffffff;
-				// validar o 'valid'?????
-			}
-			else
-			{
-				erro=erGILSONDB_11;
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
+
+					if(valid==1)
+					{
+						if(id == i)
+						{
+							// assume que o buffer 'data' vai conseguir alocar os dados resgatados!!!!
+							erro = mem_read_buff(endereco, len_pacote, data);
+
+							crc1 = gilsondb_crc(0xffffffff, data, len_pacote);
+
+							if(crc1 == crc2)
+							{
+								// tudo certo e achamos nosso id a alocamos a data em 'data'
+								break;
+							}
+							else
+							{
+								erro=erGILSONDB_27;
+								goto deu_erro;
+							}
+						}
+
+						//len_pacote += OFF_PACK_GILSON_DB;  nao precisa pois ja fizemos em 'endereco += OFF_PACK_GILSON_DB;'
+						endereco += len_pacote;
+						// resulta no endereço do proximo id
+					}
+					else
+					{
+						erro=erGILSONDB_26;
+						goto deu_erro;
+					}
+				}
+				else
+				{
+					erro=erGILSONDB_24;
+					goto deu_erro;
+				}
 			}
 		}
 		else
 		{
-			erro=erGILSONDB_12;
-		}
+			endereco = id * s_gdb.size_max_pack + s_gdb.size_header;
 
+			if(endereco > s_gdb.size_max_tot)  // if(endereco > ((s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header))
+			{
+				// 'endereco' ainda é um valor partindo de zero, nao está somado o offset de 'end_db' logo podemos
+				// medir o alcance em bytes que vamos querer gravar ou ler...
+				erro = erGILSONDB_10;
+				goto deu_erro;
+			}
+
+			// se desloca até offset do endereço do banco
+			endereco += end_db;
+
+			// análise do configs...
+			erro = mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+			memcpy(&status_id, b, 4);
+			memcpy(&check_ids, &b[4], 4);
+			memcpy(&len_pacote, &b[8], 4);
+			memcpy(&crc2, &b[12], 4);
+
+			if(check_ids == s_gdb.check_ids)
+			{
+				endereco += OFF_PACK_GILSON_DB;
+
+				if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
+				{
+					erro=erGILSONDB_19;
+					goto deu_erro;
+				}
+
+				// assume que o buffer 'data' vai conseguir alocar os dados resgatados!!!!
+				erro = mem_read_buff(endereco, len_pacote, data);
+
+				crc1 = gilsondb_crc(0xffffffff, data, len_pacote);
+
+				if(crc1 == crc2)
+				{
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
+					// validar o 'valid'?????
+				}
+				else
+				{
+					erro=erGILSONDB_11;
+				}
+			}
+			else
+			{
+				erro=erGILSONDB_12;
+			}
+		}
 	}
 
 
@@ -1105,36 +1419,91 @@ int32_t gilsondb_check(const uint32_t end_db, const uint32_t max_packs, const ui
 
 int32_t gilsondb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids)
 {
-	uint32_t endereco, i, cont=0, status_id=0, check_ids=0;
+	uint32_t endereco, i, cont=0, status_id=0, check_ids=0, len_pacote=0, crc2=0;
 	int32_t erro=erGILSONDB_OK;
 	uint8_t valid=0;
-	uint8_t b[8];
+	uint8_t b[OFF_PACK_GILSON_DB];
 	header_db s_gdb;
 
 	erro = _gilsondb_check_db_init(end_db, &s_gdb);
 
+	// OBS: nao faz validacao crc de cada pacote!!!
+
 	if(erro==erGILSONDB_OK)
 	{
-		for(i=0; i<s_gdb.max_packs; i++)
+
+		if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
 		{
-			endereco = i * s_gdb.size_max_pack + s_gdb.size_header;
+			// vamos fazer uma busca linear no banco até chegar no id alvo
+			endereco = s_gdb.size_header;  // 0 * s_gdb->size_max_pack + s_gdb->size_header
 			endereco += end_db;
-
-			mem_read_buff(endereco, 8, b);
-			memcpy(&status_id, b, 4);
-			memcpy(&check_ids, &b[4], 4);
-
-			if(s_gdb.check_ids == check_ids)
+			for(i=0; i<s_gdb.max_packs; i++)
 			{
-				// validar os dados via crc????
+				// análise do configs...
+				erro = mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+				memcpy(&len_pacote, &b[8], 4);
+				memcpy(&crc2, &b[12], 4);
 
-				valid = (uint8_t)status_id&0xff;
-
-				//printf("valid:%u\n", valid);
-				if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+				if(s_gdb.check_ids == check_ids)
 				{
-					valids[cont]=i;
-					cont+=1;
+					//endereco += OFF_PACK_GILSON_DB;
+
+					if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
+					{
+						erro=erGILSONDB_28;
+						break;
+					}
+
+					len_pacote += OFF_PACK_GILSON_DB;
+
+					valid = (uint8_t)status_id&0xff;
+
+					if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+					{
+						valids[cont]=i;
+						cont+=1;
+
+						endereco += len_pacote;
+						// resulta no endereço do proximo id
+					}
+					else
+					{
+						// para pois ja temos problema logo vamos indicar que é um id libre e ai paramos por aqui
+						break;
+					}
+				}
+				else
+				{
+					// para pois ja temos problema logo vamos indicar que é um id libre e ai paramos por aqui
+					break;
+				}
+			}
+		}
+		else
+		{
+			for(i=0; i<s_gdb.max_packs; i++)
+			{
+				endereco = i * s_gdb.size_max_pack + s_gdb.size_header;
+				endereco += end_db;
+
+				mem_read_buff(endereco, 8, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+
+				if(s_gdb.check_ids == check_ids)
+				{
+					// validar os dados via crc????
+
+					valid = (uint8_t)status_id&0xff;
+
+					//printf("valid:%u\n", valid);
+					if(valid==1)  // 'valid==1' cuidar pois pode haver 0 ou 255 indica que está vazio...
+					{
+						valids[cont]=i;
+						cont+=1;
+					}
 				}
 			}
 		}
@@ -1161,11 +1530,11 @@ int32_t gilsondb_get_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t 
 
 int32_t gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t *config)
 {
-	uint32_t temp32, cont_ids=0, id_libre=0, id_cont=0, max1, max2=0;
+	uint32_t temp32, cont_ids=0, id_libre=0, id_cont=0, max1, max2=0, size_bytes=0;
 	int32_t erro;
 	header_db s_gdb;
 
-	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont);
+	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont, &size_bytes);
 
 	if(erro==erGILSONDB_OK)
 	{
@@ -1192,8 +1561,10 @@ int32_t gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t
 		}
 		else if(tipo==egMAX_SIZE_DB)
 		{
-			max2 = s_gdb.max_packs * s_gdb.size_max_pack + s_gdb.size_header;
-			*config = max2;
+			//max2 = s_gdb.max_packs * s_gdb.size_max_pack + s_gdb.size_header;
+			//*config = max2;
+
+			*config = s_gdb.size_max_tot;  // independente do modo config_bits
 		}
 		else if(tipo==egCHECK_IDS_DB)
 		{
@@ -1205,13 +1576,29 @@ int32_t gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t
 		}
 		else if(tipo==egUSED_BYTES_DB)
 		{
-			max1 = cont_ids * s_gdb.size_max_pack + s_gdb.size_header;
+			if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+			{
+				max1 = size_bytes;
+			}
+			else
+			{
+				max1 = cont_ids * s_gdb.size_max_pack + s_gdb.size_header;
+			}
 			*config = max1;
 		}
 		else if(tipo==egFREE_BYTES_DB)
 		{
-			max2 = s_gdb.max_packs * s_gdb.size_max_pack + s_gdb.size_header;
-			max1 = cont_ids * s_gdb.size_max_pack + s_gdb.size_header;
+			//max2 = s_gdb.max_packs * s_gdb.size_max_pack + s_gdb.size_header;
+			max2 = s_gdb.size_max_tot;
+
+			if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+			{
+				max1 = size_bytes;
+			}
+			else
+			{
+				max1 = cont_ids * s_gdb.size_max_pack + s_gdb.size_header;
+			}
 			temp32 = max2 - max1;
 			*config = temp32;
 		}
@@ -1241,28 +1628,28 @@ int32_t gilsondb_get_configs(const uint32_t end_db, const uint8_t tipo, uint32_t
 
 int32_t gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome)
 {
-	uint32_t cont_ids=0, id_libre=0, id_cont=0, max2;
+	uint32_t cont_ids=0, id_libre=0, id_cont=0, max2, size_bytes=0;
 	int erro, i=0;
 	header_db s_gdb={0};
 
-	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont);
+	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont, &size_bytes);
 	max2 = s_gdb.max_packs * s_gdb.size_max_pack;
 
 #if (TIPO_DEVICE==0)
 	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%lu(%lu), VERSAO:%08lx, erro:%i\n"
-			"\tMAX_PACKS:%lu, OFFSET_PACK:%lu(%u), CODE:%lu, max_size:%lu, check_ids:%lu, configs:[%u, %u, %u, %u]\n"
+			"\tMAX_PACKS:%lu, OFFSET_PACK:%lu(%u), CODE:%lu, max_size:%lu, check_ids:%lu, configs:0x%08lx\n"
 			"\tcont:%lu, libre:%lu, id_cont:%lu\n---------------------------------\n",
 			nome, end_db, (end_db/4096), s_gdb.versao, erro, s_gdb.max_packs,
 			s_gdb.size_max_pack, OFF_PACK_GILSON_DB, s_gdb.code_db, max2, s_gdb.check_ids,
-			s_gdb.configs[0], s_gdb.configs[1], s_gdb.configs[2], s_gdb.configs[3],
+			s_gdb.configs_bits,
 			cont_ids, id_libre, id_cont);
 #else  // PC
 	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%u(%u), VERSAO:%08x, erro:%i\n"
-			"\tMAX_PACKS:%u, OFFSET_PACK:%u(%u), CODE:%u, max_size:%u, check_ids:%u, configs:[%u, %u, %u, %u]\n"
+			"\tMAX_PACKS:%u, OFFSET_PACK:%u(%u), CODE:%u, max_size:%u, check_ids:%u, configs:0x%08x\n"
 			"\tcont:%u, libre:%u, id_cont:%u\n---------------------------------\n",
 			nome, end_db, (end_db/4096), s_gdb.versao, erro, s_gdb.max_packs,
 			s_gdb.size_max_pack, OFF_PACK_GILSON_DB, s_gdb.code_db, max2, s_gdb.check_ids,
-			s_gdb.configs[0], s_gdb.configs[1], s_gdb.configs[2], s_gdb.configs[3],
+			s_gdb.configs_bits,
 			cont_ids, id_libre, id_cont);
 #endif  // #if (TIPO_DEVICE==1)
 
@@ -1275,61 +1662,118 @@ int32_t gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome)
 
 int gilsondb_info_deep(const uint32_t end_db, const char *nome_banco)
 {
-	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0, maxx, crc1=0, len_pacote=0;  // crc2=0
+	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0, maxx, crc1=0, len_pacote=0, size_bytes=0;  // crc2=0
 	int erro;
-	uint8_t valid=255;
+	uint8_t valid=255, erro_FixedSize=0;
 	uint8_t b[OFF_PACK_GILSON_DB];
 	header_db s_gdb={0};
 
-	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont);
+	erro = _gilsondb_statistics(end_db, &s_gdb, &cont_ids, &id_libre, &id_cont, &size_bytes);
 
 	maxx = (s_gdb.max_packs * s_gdb.size_max_pack) + s_gdb.size_header;
 
 	printf("gilsondb_info_deep: BANCO:%s\n", nome_banco);
-	printf("END:%u, SETOR:%u, VERSAO:%08x, MAX_PACKS:%u, OFFSET_PACK:%u, CODE:%u, max_size:%u, check_ids:%u, configs:[%u, %u, %u, %u] erro:%i\n",
-			end_db, (end_db/4096), s_gdb.versao, s_gdb.max_packs,
+	printf("END:%u, SETOR:%u, VERSAO:%08x, OFFSET_HEAD:%u, MAX_PACKS:%u, OFFSET_PACK:%u, CODE:%u, max_size:%u, check_ids:%u, configs:0x%08x size_bytes:%u/%u bytes, erro:%i\n",
+			end_db, (end_db/4096), s_gdb.versao, s_gdb.size_header, s_gdb.max_packs,
 			s_gdb.size_max_pack, s_gdb.code_db, maxx, s_gdb.check_ids,
-			s_gdb.configs[0], s_gdb.configs[1], s_gdb.configs[2], s_gdb.configs[3], erro);
+			s_gdb.configs_bits, size_bytes, s_gdb.size_max_tot, erro);
 
-	if(erro==erGILSONDB_OK)
+	if(erro==erGILSONDB_OK || erro==erGILSONDB_LOT)
 	{
 	    //printf("| %-4s | %-10s | %-12s | %-12s | %-5s | %-8s |\n", "i", "endereco", "status_id", "check_ids", "valid", "id_cont");
 	    //printf("|------|------------|--------------|--------------|-------|----------|\n");
 	    printf("| %-4s | %-10s | %-12s | %-12s | %-5s | %-8s | %-10s | %-10s |\n", "i", "endereco", "status_id", "check_ids", "valid", "id_cont", "len_pacote", "crc");
 	    printf("|------|------------|--------------|--------------|-------|----------|------------|------------|\n");
 
-		for(i=0; i<s_gdb.max_packs; i++)
-		{
-			endereco = i * s_gdb.size_max_pack + s_gdb.size_header;
+	    if(_bitRead(s_gdb.configs_bits, egFixedSize)==1)
+	    {
+			// vamos fazer uma busca linear no banco até chegar no id alvo
+			endereco = s_gdb.size_header;  // 0 * s_gdb->size_max_pack + s_gdb->size_header
 			endereco += end_db;
-			mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
-			memcpy(&status_id, b, 4);
-			memcpy(&check_ids, &b[4], 4);
-			memcpy(&len_pacote, &b[8], 4);
-			memcpy(&crc1, &b[12], 4);
-			//crc2 = gilsondb_crc(0xffffffff, &data[OFF_PACK_GILSON_DB], len_pacote);
-
-			if(s_gdb.check_ids == check_ids)
+			for(i=0; i<s_gdb.max_packs; i++)
 			{
-				valid = (uint8_t)status_id&0xff;
-				id_cont = (status_id>>8)&0xffffff;
+				mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+				memcpy(&len_pacote, &b[8], 4);
+				memcpy(&crc1, &b[12], 4);
+
+				if(check_ids == s_gdb.check_ids)
+				{
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
+
+					if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB))
+					{
+						erro=erGILSONDB_29;
+						break;
+					}
+
+					if(valid==1)
+					{
+						len_pacote += OFF_PACK_GILSON_DB;
+						endereco += len_pacote;
+						// resulta no endereço do proximo id
+					}
+					else
+					{
+						valid = 0;
+						id_cont = 0;
+						erro_FixedSize += 1;
+					}
+				}
+				else
+				{
+					valid = 0;
+					id_cont = 0;
+					erro_FixedSize += 1;
+				}
+
+				if(erro_FixedSize>5)
+				{
+					// deixar mostrar 5 linhas pois sabemos que todas as outras sao invalidas!!!
+					break;
+				}
+
+
+				printf("| %-4u | %-10u | %-12u | %-12u | %-5u | %-8u | %-10u | 0x%08X |\n", i, endereco, status_id, check_ids, valid, id_cont, (len_pacote-OFF_PACK_GILSON_DB), crc1);
+		        printf("|------|------------|--------------|--------------|-------|----------|------------|------------|\n");
 			}
-			else
+	    }
+	    else
+	    {
+			for(i=0; i<s_gdb.max_packs; i++)
 			{
-				// é de uma versao antiga ou lixo...
-				valid = 0;
-				id_cont = 0;
-				//crc1 = 0;
-				//len_pacote=0;
+				endereco = i * s_gdb.size_max_pack + s_gdb.size_header;
+				endereco += end_db;
+				mem_read_buff(endereco, OFF_PACK_GILSON_DB, b);
+				memcpy(&status_id, b, 4);
+				memcpy(&check_ids, &b[4], 4);
+				memcpy(&len_pacote, &b[8], 4);
+				memcpy(&crc1, &b[12], 4);
+				//crc2 = gilsondb_crc(0xffffffff, &data[OFF_PACK_GILSON_DB], len_pacote);
+
+				if(s_gdb.check_ids == check_ids)
+				{
+					valid = (uint8_t)status_id&0xff;
+					id_cont = (status_id>>8)&0xffffff;
+				}
+				else
+				{
+					// é de uma versao antiga ou lixo...
+					valid = 0;
+					id_cont = 0;
+					//crc1 = 0;
+					//len_pacote=0;
+				}
+
+				//printf("| %u | %u | %u | %u | %u | %u |\n", i, endereco, status_id, check_ids, valid, id_cont);
+				//printf("| %-3u | %-8u | %-9u | %-12u | %-5u | %-7u |\n", i, endereco, status_id, check_ids, valid, id_cont);
+				//printf("|-----|------------|--------------|--------------|-------|----------|\n");
+				printf("| %-4u | %-10u | %-12u | %-12u | %-5u | %-8u | %-10u | 0x%08X |\n", i, endereco, status_id, check_ids, valid, id_cont, len_pacote, crc1);
+		        printf("|------|------------|--------------|--------------|-------|----------|------------|------------|\n");
 			}
-
-			//printf("| %u | %u | %u | %u | %u | %u |\n", i, endereco, status_id, check_ids, valid, id_cont);
-			//printf("| %-3u | %-8u | %-9u | %-12u | %-5u | %-7u |\n", i, endereco, status_id, check_ids, valid, id_cont);
-			//printf("|-----|------------|--------------|--------------|-------|----------|\n");
-			printf("| %-4u | %-10u | %-12u | %-12u | %-5u | %-8u | %-10u | 0x%08X |\n", i, endereco, status_id, check_ids, valid, id_cont, len_pacote, crc1);
-	        printf("|------|------------|--------------|--------------|-------|----------|------------|------------|\n");
-		}
-
+	    }
 	}
 
 	return erro;
