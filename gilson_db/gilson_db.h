@@ -10,7 +10,7 @@
 
 /*
 
-Versão: 0.3 14/05/25
+Versão: 0.4 24/05/25
 
 100% baseado no "neide_db" e "gilson"
 
@@ -178,6 +178,16 @@ enum e_erros_GILSONDB
 	erGILSONDB_38,
 	erGILSONDB_39,
 	erGILSONDB_40,
+	erGILSONDB_41,
+	erGILSONDB_42,
+	erGILSONDB_43,
+	erGILSONDB_44,
+	erGILSONDB_45,
+	erGILSONDB_46,
+	erGILSONDB_47,
+	erGILSONDB_48,
+	erGILSONDB_49,
+	erGILSONDB_50,
 };
 
 
@@ -191,6 +201,7 @@ int32_t gilsondb_init(void);
 
 int32_t gilsondb_create_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint32_t max_bytes, const uint8_t *settings);
 int32_t gilsondb_create_add(const uint8_t key, const uint8_t tipo1, const uint8_t tipo2, const uint16_t cont_list_a, const uint16_t cont_list_b, const uint16_t cont_list_step);
+int32_t gilsondb_create_add_map(const uint16_t *map);
 int32_t gilsondb_create_end(const uint32_t end_db);
 
 
@@ -208,6 +219,25 @@ int32_t gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome);
 
 int gilsondb_info_deep(const uint32_t end_db, const char *nome_banco);
 
+
+int32_t gilsondb_encode_init(uint8_t *pack, const uint16_t size_max_pack);
+int32_t gilsondb_encode_end(uint32_t *crc);
+int32_t gilsondb_encode_mapfix(const uint16_t *map, const uint8_t *valor);
+int32_t gilsondb_encode_mapdin(const uint16_t *map, ...);
+
+int32_t gilsondb_decode_init(const uint8_t *pack);
+int32_t gilsondb_decode_end(uint32_t *crc);
+int32_t gilsondb_decode_mapfix(const uint16_t *map, uint8_t *valor);
+int32_t gilsondb_decode_mapdin(const uint16_t *map, ...);
+
+// para multi bancos no mesmo endereço via 'map'
+int32_t gilsondb_create_multi_init(const uint32_t end_db, const uint32_t max_packs, const uint32_t codedb, const uint32_t max_bytes, const uint8_t n_bancos, const uint8_t *settings);
+int32_t gilsondb_create_multi_add_map(const uint8_t i_banco, const uint8_t n_chaves, const uint16_t map[][6]);
+int32_t gilsondb_create_multi_end(const uint32_t end_db);
+
+int32_t gilsondb_multi_add(const uint32_t end_db, const uint8_t i_banco, uint8_t *data);
+
+int32_t gilsondb_get_multi_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids, uint8_t *i_bancos);
 //============================================================================================
 //============================================================================================
 
