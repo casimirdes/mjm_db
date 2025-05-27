@@ -10,7 +10,7 @@
 
 /*
 
-Versão: 0.4 24/05/25
+Versão: 0.41 26/05/25
 
 100% baseado no "neide_db" e "gilson"
 

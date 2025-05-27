@@ -170,7 +170,7 @@ static int32_t _encode_header_db(header_db *data, uint8_t *pack, const uint16_t 
     erro = gilson_encode(6, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->configs_bits);
     erro = gilson_encode(7, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->size_header);
     erro = gilson_encode(8, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->max_keys);
-    erro = gilson_encode(8, GSON_SINGLE, GSON_tUINT8, CAST_GIL data->multi_map);
+    erro = gilson_encode(9, GSON_SINGLE, GSON_tUINT8, CAST_GIL data->multi_map);
     pos_bytes = gilson_encode_end(&crc);  // criar outra que nao devolve o crc!!!!
 
 #if (USO_DEBUG_LIB==1)
@@ -207,7 +207,7 @@ static int32_t _decode_header_db(header_db *data, const uint8_t *pack)
     erro = gilson_decode(6, GSON_SINGLE, GSON_tUINT32, CAST_GIL data->configs_bits);
     erro = gilson_decode(7, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->size_header);
     erro = gilson_decode(8, GSON_SINGLE, GSON_tUINT16, CAST_GIL data->max_keys);
-    erro = gilson_decode(8, GSON_SINGLE, GSON_tUINT8, CAST_GIL data->multi_map);
+    erro = gilson_decode(9, GSON_SINGLE, GSON_tUINT8, CAST_GIL data->multi_map);
 	pos_bytes = gilson_decode_end(&crc);
 
 #if (USO_DEBUG_LIB==1)
@@ -1699,19 +1699,19 @@ int32_t gilsondb_get_info(const uint32_t end_db, char *sms, const char *nome)
 
 #if (TIPO_DEVICE==0)
 	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%lu(%lu), VERSAO:%08lx, erro:%i\n"
-			"\tMAX_PACKS:%lu, OFFSET_PACK:%lu(%u), CODE:%lu, max_size:%lu, check_ids:%lu, configs:0x%08lx, multi_map:%u\n"
+			"\tMAX_PACKS:%lu, OFFSET_PACK:%lu(%u), CODE:%lu, max_size:%lu, check_ids:%lu, configs:0x%08lx, multi_map:%u, OFFSET_HEAD:%u\n"
 			"\tcont:%lu, libre:%lu, id_cont:%lu\n---------------------------------\n",
 			nome, end_db, (end_db/4096), s_gdb.versao, erro, s_gdb.max_packs,
 			s_gdb.size_max_pack, OFF_PACK_GILSON_DB, s_gdb.code_db, max2, s_gdb.check_ids,
-			s_gdb.configs_bits, s_gdb.multi_map,
+			s_gdb.configs_bits, s_gdb.multi_map, s_gdb.size_header,
 			cont_ids, id_libre, id_cont);
 #else  // PC
 	i = sprintf(sms, "---------------------------------\nBANCO:%s, END:%u(%u), VERSAO:%08x, erro:%i\n"
-			"\tMAX_PACKS:%u, OFFSET_PACK:%u(%u), CODE:%u, max_size:%u, check_ids:%u, configs:0x%08x, multi_map:%u\n"
+			"\tMAX_PACKS:%u, OFFSET_PACK:%u(%u), CODE:%u, max_size:%u, check_ids:%u, configs:0x%08x, multi_map:%u, OFFSET_HEAD:%u\n"
 			"\tcont:%u, libre:%u, id_cont:%u\n---------------------------------\n",
 			nome, end_db, (end_db/4096), s_gdb.versao, erro, s_gdb.max_packs,
 			s_gdb.size_max_pack, OFF_PACK_GILSON_DB, s_gdb.code_db, max2, s_gdb.check_ids,
-			s_gdb.configs_bits, s_gdb.multi_map,
+			s_gdb.configs_bits, s_gdb.multi_map, s_gdb.size_header,
 			cont_ids, id_libre, id_cont);
 #endif  // #if (TIPO_DEVICE==1)
 
@@ -1726,6 +1726,7 @@ int gilsondb_info_deep(const uint32_t end_db, const char *nome_banco)
 {
 	uint32_t endereco, i, cont_ids=0, id_libre=0, status_id=0, id_cont=0, check_ids=0, maxx, crc1=0, len_pacote=0, size_bytes=0;  // crc2=0
 	int erro;
+	uint16_t j, k, chave, tipo1, tipo2, cont_list_a, cont_list_b, cont_list_step, size_map;
 	uint8_t valid=255, erro_FixedSize=0;
 	uint8_t b[OFF_PACK_GILSON_DB+1], rOFF_PACK_GILSON_DB=0, i_banco=0;
 	header_db s_gdb={0};
@@ -1739,6 +1740,56 @@ int gilsondb_info_deep(const uint32_t end_db, const char *nome_banco)
 			end_db, (end_db/4096), s_gdb.versao, s_gdb.size_header, s_gdb.max_packs,
 			s_gdb.size_max_pack, s_gdb.code_db, maxx, s_gdb.check_ids,
 			s_gdb.configs_bits, size_bytes, s_gdb.size_max_tot, s_gdb.multi_map, erro);
+
+	printf("MAPA DO BANCO:\n");
+	if(s_gdb.multi_map==1)
+	{
+		// vamo varre as chaves alocadas no header, s_gdb.size_header
+		erro = mem_read_buff(end_db+HEADER_DB, (s_gdb.size_header - HEADER_DB), buf_db);  // le o restante do header completo!
+		chave=0;
+	    printf("| chave | tipo1 | tipo2 | cont_list_a | cont_list_b | cont_list_step |\n");
+	    printf("|-------|-------|-------|-------------|-------------|----------------|\n");
+		for(j=0; j<(s_gdb.size_header - HEADER_DB); j+=8)
+		{
+			tipo1 = buf_db[j];
+			tipo2 = buf_db[j+1];
+			memcpy(&cont_list_a, &buf_db[j+2], 2);
+			memcpy(&cont_list_b, &buf_db[j+4], 2);
+			memcpy(&cont_list_step, &buf_db[j+6], 2);
+			//printf("\tchave:%u, tipo1:%u, tipo2:%u, cont_list_a:%u, cont_list_b:%u, cont_list_step:%u\n", chave, tipo1, tipo2, cont_list_a, cont_list_b, cont_list_step);
+			printf("| %5u | %5u | %5u | %11u | %11u | %14u |\n", chave, tipo1, tipo2, cont_list_a, cont_list_b, cont_list_step);
+			chave+=1;
+		}
+		printf("|-------|-------|-------|-------------|-------------|----------------|\n\n");
+	}
+	else
+	{
+		// via 'mapa'
+		// vamo varre as chaves alocadas no header, s_gdb.size_header
+		erro = mem_read_buff(end_db+HEADER_DB, (s_gdb.size_header - HEADER_DB), buf_db);  // le o restante do header completo!
+		j=0;
+		for(i=0; i<s_gdb.multi_map; i++)
+		{
+			memcpy(&size_map, &buf_db[j], 2);
+			j+=2;
+			printf("BANCO:%u size_map:%u bytes, j:%u\n", i, size_map, j);
+		    printf("| chave | tipo1 | tipo2 | cont_list_a | cont_list_b | cont_list_step |\n");
+		    printf("|-------|-------|-------|-------------|-------------|----------------|\n");
+			for(k=j; k<(size_map+j); k+=12)
+			{
+				memcpy(&chave, &buf_db[k], 2);
+				memcpy(&tipo1, &buf_db[k+2], 2);
+				memcpy(&tipo2, &buf_db[k+4], 2);
+				memcpy(&cont_list_a, &buf_db[k+6], 2);
+				memcpy(&cont_list_b, &buf_db[k+8], 2);
+				memcpy(&cont_list_step, &buf_db[k+10], 2);
+				printf("| %5u | %5u | %5u | %11u | %11u | %14u |  j:%u k:%u\n", chave, tipo1, tipo2, cont_list_a, cont_list_b, cont_list_step, j, k);
+			}
+			printf("|-------|-------|-------|-------------|-------------|----------------|\n\n");
+			j+=size_map;
+		}
+	}
+
 
 	if(erro==erGILSONDB_OK || erro==erGILSONDB_LOT)
 	{
@@ -2056,6 +2107,12 @@ int32_t gilsondb_create_multi_init(const uint32_t end_db, const uint32_t max_pac
 		s_gilsondb.versao = VERSAO_GILSONDB;
 		s_gilsondb.max_packs = max_packs;
 		s_gilsondb.code_db = codedb;
+
+		if(n_bancos<=1)
+		{
+			erro = erGILSONDB_32;
+			goto deu_erro;
+		}
 		s_gilsondb.multi_map = n_bancos;
 
 		//um dos parameteos vai ser esquema de operar em saltos fixos de pior caso ou sempre dinamico
@@ -2078,7 +2135,7 @@ int32_t gilsondb_create_multi_init(const uint32_t end_db, const uint32_t max_pac
 		{
 			if(max_bytes==0)
 			{
-				erro = erGILSONDB_32;
+				erro = erGILSONDB_33;
 				goto deu_erro;
 			}
 			s_gilsondb.size_max_tot = max_bytes;
@@ -2086,7 +2143,7 @@ int32_t gilsondb_create_multi_init(const uint32_t end_db, const uint32_t max_pac
 		else
 		{
 			// ate entao só funciona para modo 'egFixedSize' ativo!!!!
-			erro = erGILSONDB_33;
+			erro = erGILSONDB_34;
 			goto deu_erro;
 		}
 		// la em 'gilsondb_create_end()' vai atualizar com o valor final de 's_gilsondb.size_max_tot' para todos os modos!!!
@@ -2158,7 +2215,7 @@ int32_t gilsondb_create_multi_add_map(const uint8_t i_banco, const uint8_t n_cha
 
 		if(i_banco >= s_gilsondb.multi_map)
 		{
-			erro = erGILSONDB_34;
+			erro = erGILSONDB_35;
 			goto deu_erro;
 		}
 
@@ -2172,7 +2229,7 @@ int32_t gilsondb_create_multi_add_map(const uint8_t i_banco, const uint8_t n_cha
 		{
 			// +8 é o pior caso...
 			// ver se nao vai explodir o 'buf_db[]'
-			erro = erGILSONDB_35;
+			erro = erGILSONDB_36;
 			goto deu_erro;
 		}
 
@@ -2182,8 +2239,18 @@ int32_t gilsondb_create_multi_add_map(const uint8_t i_banco, const uint8_t n_cha
 		// para cada mapa a ser gravado os 2 primeiros bytes sao tamanho do mapa, seguido do mapa
 		memcpy(&buf_db[off], &size_map, 2);
 		off += 2;
-		memcpy(&buf_db[off], (uint8_t *)&map, size_map);
+		memcpy(&buf_db[off], (uint8_t *)map, size_map);
 		off += size_map;
+		/*
+		printf("i_banco:%u, size_map:%u, size_header:%u\n", i_banco, size_map, s_gilsondb.size_header);
+		printf("| chave | tipo1 | tipo2 | cont_list_a | cont_list_b | cont_list_step |\n");
+		printf("|-------|-------|-------|-------------|-------------|----------------|\n");
+		for(i=0; i<n_chaves; i++)
+		{
+			printf("| %5u | %5u | %5u | %11u | %11u | %14u |\n", map[i][0], map[i][1], map[i][2], map[i][3], map[i][4], map[i][5]);
+		}
+		printf("|-------|-------|-------|-------------|-------------|----------------|\n\n");
+		*/
 
 		s_gilsondb.size_header += (off-s_gilsondb.size_header);
 
@@ -2384,7 +2451,7 @@ int32_t gilsondb_multi_add(const uint32_t end_db, const uint8_t i_banco, uint8_t
 
 		if(i_banco != data[16])
 		{
-			erro = erGILSONDB_36;
+			erro = erGILSONDB_37;
 			goto deu_erro;
 		}
 
@@ -2398,13 +2465,13 @@ int32_t gilsondb_multi_add(const uint32_t end_db, const uint8_t i_banco, uint8_t
 			//printf("tcheeeeeeeeeeeeeeee endereco:%u e size_max_tot:%u\n", endereco, s_gdb.size_max_tot);
 			if((endereco+len_pacote+OFF_PACK_GILSON_DB+1) > s_gdb.size_max_tot)
 			{
-				erro = erGILSONDB_37;
+				erro = erGILSONDB_38;
 				goto deu_erro;
 			}
 		}
 		else
 		{
-			erro = erGILSONDB_38;
+			erro = erGILSONDB_39;
 			goto deu_erro;
 			/*
 			endereco = id_libre * s_gdb.size_max_pack + s_gdb.size_header;
@@ -2442,7 +2509,7 @@ int32_t gilsondb_multi_add(const uint32_t end_db, const uint8_t i_banco, uint8_t
 
 		if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-OFF_PACK_GILSON_DB+1))
 		{
-			erro=erGILSONDB_39;
+			erro=erGILSONDB_40;
 			goto deu_erro;
 		}
 		len_pacote += (OFF_PACK_GILSON_DB+1);
@@ -2512,7 +2579,7 @@ int32_t gilsondb_get_multi_valids(const uint32_t end_db, uint32_t *cont_ids, uin
 	{
 		if(s_gdb.multi_map==1)
 		{
-			erro=erGILSONDB_40;
+			erro=erGILSONDB_41;
 			goto deu_erro;
 		}
 
@@ -2549,7 +2616,7 @@ int32_t gilsondb_get_multi_valids(const uint32_t end_db, uint32_t *cont_ids, uin
 
 					if(len_pacote==0 || len_pacote>(s_gdb.size_max_pack-rOFF_PACK_GILSON_DB))
 					{
-						erro=erGILSONDB_41;
+						erro=erGILSONDB_42;
 						break;
 					}
 
