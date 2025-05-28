@@ -10,7 +10,7 @@
 
 /*
 
-Versão: 0.41 26/05/25
+Versão: 0.42 27/05/25
 
 100% baseado no "neide_db" e "gilson"
 
@@ -137,6 +137,7 @@ enum e_erros_GILSONDB
 	erGILSONDB_DEL = -4000,
 	erGILSONDB_LOT,  // banco lotado/cheio
 	erGILSONDB_OCUPADO,
+	erGILSONDB_NOMULTI,
 	erGILSONDB_0,
 	erGILSONDB_1,
 	erGILSONDB_2,
@@ -238,8 +239,13 @@ int32_t gilsondb_create_multi_end(const uint32_t end_db);
 int32_t gilsondb_multi_add(const uint32_t end_db, const uint8_t i_banco, uint8_t *data);
 
 int32_t gilsondb_get_multi_valids(const uint32_t end_db, uint32_t *cont_ids, uint16_t *valids, uint8_t *i_bancos);
+int32_t gilsondb_get_multi_ibanco_valids(const uint32_t end_db, uint32_t *cont_ids, const uint8_t ibanco, uint16_t *valids);
+
 //============================================================================================
 //============================================================================================
+
+
+int32_t gilsondb_del_fixed(const uint32_t end_db, const uint32_t cont_del);
 
 
 #endif /* SRC_GILSON_DB_GILSON_DB_H_ */
